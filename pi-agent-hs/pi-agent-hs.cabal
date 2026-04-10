@@ -1,0 +1,49 @@
+cabal-version:      3.0
+name:               pi-agent-hs
+version:            0.1.0.0
+synopsis:           Haskell port of @mariozechner/pi-agent-core
+description:
+  A library for building LLM-powered agentic applications.
+  Provides a two-level API: a pure agent loop (PiAgent.AgentLoop)
+  and a stateful Agent wrapper (PiAgent.Agent).
+  .
+  Port of the TypeScript \@mariozechner\/pi-agent-core package.
+
+license:            MIT
+build-type:         Simple
+
+common shared
+  ghc-options:        -Wall
+  default-language:   GHC2021
+  default-extensions:
+    DeriveGeneric
+    LambdaCase
+    OverloadedStrings
+    RecordWildCards
+  build-depends:
+    base             ^>=4.17 || ^>=4.18 || ^>=4.19 || ^>=4.20,
+    aeson            ^>=2.1  || ^>=2.2,
+    async            ^>=2.2,
+    containers       ^>=0.6  || ^>=0.7,
+    stm              ^>=2.5,
+    text             ^>=1.2  || ^>=2.0  || ^>=2.1,
+    time             ^>=1.12
+
+library
+  import:          shared
+  exposed-modules:
+    PiAgent
+    PiAgent.Types
+    PiAgent.Stream
+    PiAgent.AgentLoop
+    PiAgent.Agent
+  hs-source-dirs:  src
+
+test-suite pi-agent-hs-test
+  import:          shared
+  type:            exitcode-stdio-1.0
+  hs-source-dirs:  test
+  main-is:         Spec.hs
+  build-depends:
+    pi-agent-hs,
+    hspec ^>=2.11
