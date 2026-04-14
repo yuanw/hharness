@@ -1,30 +1,30 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedStrings #-}
 
--- | Minimal terminal agent from
--- <https://ampcode.com/notes/how-to-build-an-agent>: @read_file@, @list_files@,
--- Claude via Mercury\'s <https://github.com/MercuryTechnologies/claude>
--- bindings, and @pi-agent-hs@ for the tool loop.
+{- | Minimal terminal agent from
+<https://ampcode.com/notes/how-to-build-an-agent>: @read_file@, @list_files@,
+Claude via Mercury\'s <https://github.com/MercuryTechnologies/claude>
+bindings, and @pi-agent-hs@ for the tool loop.
+-}
 module Main (main) where
 
 import Control.Monad (forM, void)
 import Data.Aeson (FromJSON (..), Value, withObject, (.:), (.=))
 import Data.Foldable (traverse_)
-import Data.Maybe (fromMaybe)
 import Data.List (isPrefixOf)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, getCurrentDirectory, listDirectory)
 import System.Environment (getEnv, lookupEnv)
 import System.FilePath (addTrailingPathSeparator, isRelative, makeRelative, normalise, splitDirectories, (</>))
-import System.IO (hFlush, hIsEOF, stdin, stdout)
+import System.IO (hFlush, isEOF, stdout)
 
-import qualified Claude.V1 as V1
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text.Encoding
-import qualified Data.Text.IO as Text.IO
+import Claude.V1 qualified as V1
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Lazy qualified as LBS
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text.Encoding
+import Data.Text.IO qualified as Text.IO
 
 import PiAgent
 
@@ -38,13 +38,14 @@ main :: IO ()
 main = do
   key <- Text.pack <$> getEnv "ANTHROPIC_KEY"
   baseUrl <- Text.pack . fromMaybe "https://api.anthropic.com" <$> lookupEnv "ANTHROPIC_BASE_URL"
+  modelId <- maybe defaultClaudeModelId Text.pack <$> lookupEnv "ANTHROPIC_MODEL"
   root <- getCurrentDirectory >>= canonicalizePath
   env <- V1.getClientEnv baseUrl
   let methods = V1.makeMethods env key (Just "2023-06-01")
       streamFn = claudeStreamFn methods
       model =
         Model
-          { modelId = defaultClaudeModelId
+          { modelId = modelId
           , modelProvider = "anthropic"
           , modelContext = 200000
           }
@@ -68,7 +69,7 @@ main = do
   loop agent
   where
     loop agent = do
-      eof <- hIsEOF stdin
+      eof <- isEOF
       if eof
         then Text.IO.putStrLn "Goodbye."
         else do
@@ -87,12 +88,12 @@ printEvent = \case
   EvToolExecEnd _ name _details isErr ->
     Text.IO.putStrLn $
       if isErr then "tool failed: " <> name else "tool done: " <> name
-  EvMessageEnd AssistantMessage{amBlocks = bs} -> do
+  EvMessageEnd AssistantMessage {amBlocks = bs} -> do
     Text.IO.putStr "Claude: "
     traverse_ printAssistantBlock bs
     Text.IO.putStrLn ""
-  EvTurnEnd{} -> pure ()
-  EvAgentEnd{} -> pure ()
+  EvTurnEnd {} -> pure ()
+  EvAgentEnd {} -> pure ()
   _ -> pure ()
 
 printAssistantBlock :: AssistantBlock -> IO ()
@@ -176,7 +177,7 @@ listFilesTool root =
           , "required" .= ([] :: [Text])
           ]
     , atPrepareArgs = Nothing
-    , atValidateArgs = \v -> Right v
+    , atValidateArgs = Right
     , atExecute = \_callId _args _cancel _cb -> do
         paths <- listFilesRel root root
         let txt = Text.intercalate "\n" (map Text.pack paths)

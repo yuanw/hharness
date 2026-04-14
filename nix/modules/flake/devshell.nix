@@ -15,7 +15,8 @@
         packages = with pkgs; [
           just
           nixd
-         cabal-install
+          cabal-install
+          ghc
           ghciwatch
         ];
       };

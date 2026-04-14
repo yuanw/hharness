@@ -1,17 +1,18 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
--- | Bridge from @pi-agent-hs@ to Mercury\'s @claude@ package
--- (<https://github.com/MercuryTechnologies/claude>).
---
--- Implements 'StreamFn' via the blocking Messages API (@createMessage@): one
--- @EvStart@ with the completed assistant turn, then end-of-stream. That is
--- enough for the agent loop (tools, steering, follow-ups) and mirrors the
--- control flow described in
--- <https://ampcode.com/notes/how-to-build-an-agent>.
-module PiAgent.Claude
-  ( claudeStreamFn
-  , defaultClaudeModelId
-  ) where
+{- | Bridge from @pi-agent-hs@ to Mercury\'s @claude@ package
+(<https://github.com/MercuryTechnologies/claude>).
+
+Implements 'StreamFn' via the blocking Messages API (@createMessage@): one
+@EvStart@ with the completed assistant turn, then end-of-stream. That is
+enough for the agent loop (tools, steering, follow-ups) and mirrors the
+control flow described in
+<https://ampcode.com/notes/how-to-build-an-agent>.
+-}
+module PiAgent.Claude (
+  claudeStreamFn,
+  defaultClaudeModelId,
+) where
 
 import Control.Concurrent.Async (async)
 import Control.Exception (SomeException, try)
@@ -21,11 +22,11 @@ import Data.Text (Text)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Numeric.Natural (Natural)
 
-import qualified Claude.V1 as V1
-import qualified Claude.V1.Messages as CM
-import qualified Claude.V1.Tool as Tool
-import qualified Data.Text as Text
-import qualified Data.Vector as Vector
+import Claude.V1 qualified as V1
+import Claude.V1.Messages qualified as CM
+import Claude.V1.Tool qualified as Tool
+import Data.Text qualified as Text
+import Data.Vector qualified as Vector
 
 import PiAgent.AgentLoop (StreamFn)
 import PiAgent.Stream (endStream, newEventStream, pushEvent)
@@ -35,10 +36,11 @@ import PiAgent.Types
 defaultClaudeModelId :: Text
 defaultClaudeModelId = "claude-sonnet-4-5-20250929"
 
--- | Build a 'StreamFn' from 'V1.Methods' ('V1.makeMethods').
---
--- The caller\'s API key is the one used to create @Methods@; @soApiKey@ in
--- 'StreamOptions' is ignored for now.
+{- | Build a 'StreamFn' from 'V1.Methods' ('V1.makeMethods').
+
+The caller\'s API key is the one used to create @Methods@; @soApiKey@ in
+'StreamOptions' is ignored for now.
+-}
 claudeStreamFn :: V1.Methods -> StreamFn
 claudeStreamFn methods model llmCtx opts = do
   es <- newEventStream
@@ -75,7 +77,7 @@ claudeStreamFn methods model llmCtx opts = do
               , CM.temperature = soTemperature opts
               , CM.tools = tools
               }
-      let V1.Methods{V1.createMessage = createMessage} = methods
+      let V1.Methods {V1.createMessage = createMessage} = methods
       createMessage req
     case r of
       Left e -> onErr (Text.pack (show e))
@@ -109,21 +111,21 @@ llmToolToDefinition t =
 
 piMessageToClaude :: Message -> Either Text CM.Message
 piMessageToClaude = \case
-  UserMessage{umContent = cs} ->
+  UserMessage {umContent = cs} ->
     Right
       CM.Message
         { CM.role = CM.User
         , CM.content = Vector.fromList (map userContentBlock cs)
         , CM.cache_control = Nothing
         }
-  AssistantMessage{amBlocks = bs} ->
+  AssistantMessage {amBlocks = bs} ->
     Right
       CM.Message
         { CM.role = CM.Assistant
         , CM.content = Vector.fromList (concatMap assistantBlockToContents bs)
         , CM.cache_control = Nothing
         }
-  ToolResultMessage{trmToolCallId = tid, trmContent = cs, trmIsError = err} ->
+  ToolResultMessage {trmToolCallId = tid, trmContent = cs, trmIsError = err} ->
     Right
       CM.Message
         { CM.role = CM.User
@@ -140,7 +142,7 @@ piMessageToClaude = \case
 userContentBlock :: ContentBlock -> CM.Content
 userContentBlock = \case
   BlockText tc ->
-    CM.Content_Text{CM.text = tcText tc, CM.cache_control = Nothing}
+    CM.Content_Text {CM.text = tcText tc, CM.cache_control = Nothing}
   BlockImage (ImageContent u mt) ->
     CM.Content_Text
       { CM.text = "Image (" <> mt <> "): " <> u
@@ -150,10 +152,10 @@ userContentBlock = \case
 assistantBlockToContents :: AssistantBlock -> [CM.Content]
 assistantBlockToContents = \case
   ABText t ->
-    [CM.Content_Text{CM.text = t, CM.cache_control = Nothing}]
+    [CM.Content_Text {CM.text = t, CM.cache_control = Nothing}]
   ABThinking t ->
-    [CM.Content_Thinking{CM.thinking = t, CM.signature = ""}]
-  ABToolCall ToolCall{tcId = i, tcName = n, tcArguments = a} ->
+    [CM.Content_Thinking {CM.thinking = t, CM.signature = ""}]
+  ABToolCall ToolCall {tcId = i, tcName = n, tcArguments = a} ->
     [ CM.Content_Tool_Use
         { CM.id = i
         , CM.name = n
@@ -182,19 +184,19 @@ messageResponseToPartial ts (CM.MessageResponse _ _ _ respContent _ respStop _ _
 
 contentBlockToAssistant :: CM.ContentBlock -> Either Text AssistantBlock
 contentBlockToAssistant = \case
-  CM.ContentBlock_Text{CM.text = t} -> Right (ABText t)
-  CM.ContentBlock_Thinking{CM.thinking = t} -> Right (ABThinking t)
-  CM.ContentBlock_Tool_Use{CM.id = i, CM.name = n, CM.input = a} ->
-    Right (ABToolCall ToolCall{tcId = i, tcName = n, tcArguments = a})
-  CM.ContentBlock_Redacted_Thinking{} ->
+  CM.ContentBlock_Text {CM.text = t} -> Right (ABText t)
+  CM.ContentBlock_Thinking {CM.thinking = t} -> Right (ABThinking t)
+  CM.ContentBlock_Tool_Use {CM.id = i, CM.name = n, CM.input = a} ->
+    Right (ABToolCall ToolCall {tcId = i, tcName = n, tcArguments = a})
+  CM.ContentBlock_Redacted_Thinking {} ->
     Right (ABThinking "[redacted thinking]")
-  CM.ContentBlock_Server_Tool_Use{CM.name = n} ->
+  CM.ContentBlock_Server_Tool_Use {CM.name = n} ->
     Left ("Unsupported server tool block in assistant output: " <> n)
-  CM.ContentBlock_Tool_Search_Tool_Result{} ->
+  CM.ContentBlock_Tool_Search_Tool_Result {} ->
     Left "Unexpected tool_search_tool_result block in assistant output"
-  CM.ContentBlock_Code_Execution_Tool_Result{} ->
+  CM.ContentBlock_Code_Execution_Tool_Result {} ->
     Left "Unexpected code_execution_tool_result block in assistant output"
-  CM.ContentBlock_Unknown{CM.type_ = ty} ->
+  CM.ContentBlock_Unknown {CM.type_ = ty} ->
     Left ("Unknown assistant content block type: " <> ty)
 
 mapStopReason :: Maybe CM.StopReason -> Either Text StopReason
