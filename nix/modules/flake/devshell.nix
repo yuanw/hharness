@@ -15,7 +15,7 @@
         packages = with pkgs; [
           just
           nixd
-          cache
+         
           ghciwatch
         ];
       };
