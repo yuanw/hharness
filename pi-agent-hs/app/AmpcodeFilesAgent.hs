@@ -11,10 +11,11 @@ module Main (main) where
 import Control.Monad (forM, void)
 import Data.Aeson (FromJSON (..), Value, withObject, (.:), (.=))
 import Data.Foldable (traverse_)
+import Data.Maybe (fromMaybe)
 import Data.List (isPrefixOf)
 import Data.Text (Text)
 import System.Directory (canonicalizePath, doesDirectoryExist, doesFileExist, getCurrentDirectory, listDirectory)
-import System.Environment (getEnv)
+import System.Environment (getEnv, lookupEnv)
 import System.FilePath (addTrailingPathSeparator, isRelative, makeRelative, normalise, splitDirectories, (</>))
 import System.IO (hFlush, hIsEOF, stdin, stdout)
 
@@ -36,8 +37,9 @@ instance FromJSON ReadFileArgs where
 main :: IO ()
 main = do
   key <- Text.pack <$> getEnv "ANTHROPIC_KEY"
+  baseUrl <- Text.pack . fromMaybe "https://api.anthropic.com" <$> lookupEnv "ANTHROPIC_BASE_URL"
   root <- getCurrentDirectory >>= canonicalizePath
-  env <- V1.getClientEnv "https://api.anthropic.com"
+  env <- V1.getClientEnv baseUrl
   let methods = V1.makeMethods env key (Just "2023-06-01")
       streamFn = claudeStreamFn methods
       model =
