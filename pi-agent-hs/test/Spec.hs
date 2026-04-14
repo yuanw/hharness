@@ -5,6 +5,7 @@ import Control.Concurrent.STM (newTVarIO, readTVarIO)
 import Data.Aeson (toJSON)
 import Data.IORef
 import Data.Int (Int64)
+import Data.Text (Text)
 import Test.Hspec
 
 import PiAgent

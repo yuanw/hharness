@@ -27,9 +27,12 @@ module PiAgent
   , module PiAgent.AgentLoop
     -- * Re-exports: high-level agent
   , module PiAgent.Agent
+    -- * Anthropic client bridge (Mercury @claude@ package)
+  , module PiAgent.Claude
   ) where
 
 import PiAgent.Types
 import PiAgent.Stream
 import PiAgent.AgentLoop
 import PiAgent.Agent
+import PiAgent.Claude

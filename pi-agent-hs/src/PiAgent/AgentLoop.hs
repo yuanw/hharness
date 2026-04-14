@@ -23,6 +23,8 @@ import Data.Int (Int64)
 import Data.IORef
 import Data.List (find, foldl')
 import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
 import PiAgent.Stream (EventStream, endStream, foldStream, newEventStream, pushEvent)
@@ -393,7 +395,7 @@ runCall pc cancel emit = do
       (Just onUpdate)
   pure $ case result of
     Right r   -> (r, False)
-    Left  err -> (mkErrResult (show err), True)
+    Left  err -> (mkErrResult (Text.pack (show err)), True)
 
 -- | Apply afterToolCall hook overrides, then emit the final outcome.
 finalizeCall

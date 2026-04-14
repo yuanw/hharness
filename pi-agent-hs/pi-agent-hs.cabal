@@ -1,11 +1,12 @@
 cabal-version:      3.0
 name:               pi-agent-hs
 version:            0.1.0.0
-synopsis:           Haskell port of @mariozechner/pi-agent-core
+synopsis:           Haskell port of @mariozechner/pi-agent-core (plus Claude bridge)
 description:
   A library for building LLM-powered agentic applications.
   Provides a two-level API: a pure agent loop (PiAgent.AgentLoop)
   and a stateful Agent wrapper (PiAgent.Agent).
+  PiAgent.Claude connects the loop to Anthropic via Mercury's @claude@ package.
   .
   Port of the TypeScript \@mariozechner\/pi-agent-core package.
 
@@ -24,10 +25,12 @@ common shared
     base             ^>=4.17 || ^>=4.18 || ^>=4.19 || ^>=4.20,
     aeson            ^>=2.1  || ^>=2.2,
     async            ^>=2.2,
+    claude           ^>=1.4,
     containers       ^>=0.6  || ^>=0.7,
     stm              ^>=2.5,
     text             ^>=1.2  || ^>=2.0  || ^>=2.1,
-    time             ^>=1.12
+    time             ^>=1.12,
+    vector           ^>=0.13 || ^>=0.14
 
 library
   import:          shared
@@ -37,7 +40,23 @@ library
     PiAgent.Stream
     PiAgent.AgentLoop
     PiAgent.Agent
+    PiAgent.Claude
   hs-source-dirs:  src
+
+executable ampcode-files-agent
+  import:          shared
+  main-is:         AmpcodeFilesAgent.hs
+  hs-source-dirs:  app
+  build-depends:
+    aeson            ^>=2.1  || ^>=2.2,
+    base             ^>=4.17 || ^>=4.18 || ^>=4.19 || ^>=4.20,
+    bytestring       ^>=0.11 || ^>=0.12,
+    claude           ^>=1.4,
+    directory        ^>=1.3,
+    filepath         ^>=1.4  || ^>=1.5,
+    pi-agent-hs,
+    text             ^>=1.2  || ^>=2.0  || ^>=2.1,
+    time             ^>=1.12
 
 test-suite pi-agent-hs-test
   import:          shared
