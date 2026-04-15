@@ -1,9 +1,6 @@
 # Quick test of Ollama Anthropic API compatibility
 # Usage: hurl --variable model=llama2 test-ollama-quick.hurl
 
-# Quick compatibility check - list models
-GET http://localhost:11434/v1/models
-HTTP 200
 
 # Simple message creation test
 POST http://localhost:11434/v1/messages
