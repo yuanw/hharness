@@ -26,6 +26,8 @@
         shellHook = ''
           export LIBRARY_PATH="${pkgs.zlib}/lib''${LIBRARY_PATH:+:}''${LIBRARY_PATH}"
           export CPATH="${pkgs.zlib.dev}/include''${CPATH:+:}''${CPATH}"
+          # Default model for pi-agent-hs / ampcode-files-agent (Sonnet); override per provider.
+          export ANTHROPIC_MODEL="''${ANTHROPIC_MODEL:-claude-sonnet-4-5-20250929}"
         '';
       };
     };

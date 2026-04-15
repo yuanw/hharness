@@ -35,10 +35,15 @@ instance FromJSON ReadFileArgs where
 
 main :: IO ()
 main = do
-  key <- Text.pack <$> getEnv "ANTHROPIC_KEY"
+  key <- Text.pack <$> getEnv "ANTHROPIC_API_KEY"
   baseUrl <- Text.pack . fromMaybe "https://api.anthropic.com" <$> lookupEnv "ANTHROPIC_BASE_URL"
   anthropicVersion <- fmap Text.pack <$> lookupEnv "ANTHROPIC_VERSION"
-  modelId <- maybe defaultClaudeModelId Text.pack <$> lookupEnv "ANTHROPIC_MODEL"
+  modelId <- do
+    m <- lookupEnv "ANTHROPIC_MODEL"
+    pure $ case m of
+      Nothing -> defaultClaudeModelId
+      Just s | Text.null (Text.strip (Text.pack s)) -> defaultClaudeModelId
+      Just s -> Text.pack s
   root <- getCurrentDirectory >>= canonicalizePath
   let streamFn = claudeStreamFnCompat baseUrl key anthropicVersion
       model =
