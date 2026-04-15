@@ -19,7 +19,6 @@ import System.Environment (getEnv, lookupEnv)
 import System.FilePath (addTrailingPathSeparator, isRelative, makeRelative, normalise, splitDirectories, (</>))
 import System.IO (hFlush, isEOF, stdout)
 
-import Claude.V1 qualified as V1
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
@@ -38,11 +37,10 @@ main :: IO ()
 main = do
   key <- Text.pack <$> getEnv "ANTHROPIC_KEY"
   baseUrl <- Text.pack . fromMaybe "https://api.anthropic.com" <$> lookupEnv "ANTHROPIC_BASE_URL"
+  anthropicVersion <- fmap Text.pack <$> lookupEnv "ANTHROPIC_VERSION"
   modelId <- maybe defaultClaudeModelId Text.pack <$> lookupEnv "ANTHROPIC_MODEL"
   root <- getCurrentDirectory >>= canonicalizePath
-  env <- V1.getClientEnv baseUrl
-  let methods = V1.makeMethods env key (Just "2023-06-01")
-      streamFn = claudeStreamFn methods
+  let streamFn = claudeStreamFnCompat baseUrl key anthropicVersion
       model =
         Model
           { modelId = modelId
@@ -60,7 +58,8 @@ main = do
           , aoTools = tools
           , aoStreamOptions =
               defaultStreamOptions
-                { soMaxTokens = Just 4096
+                { -- Thinking models may need a large budget before emitting a @text@ block.
+                  soMaxTokens = Just 8192
                 }
           }
   agent <- newAgent opts
@@ -88,10 +87,22 @@ printEvent = \case
   EvToolExecEnd _ name _details isErr ->
     Text.IO.putStrLn $
       if isErr then "tool failed: " <> name else "tool done: " <> name
-  EvMessageEnd AssistantMessage {amBlocks = bs} -> do
+  EvMessageEnd AssistantMessage {amBlocks = bs, amStopReason = sr, amErrorMsg = em} -> do
     Text.IO.putStr "Claude: "
-    traverse_ printAssistantBlock bs
-    Text.IO.putStrLn ""
+    case (bs, em) of
+      ([], Just errMsg) ->
+        Text.IO.putStrLn errMsg
+      ([], Nothing)
+        | sr == StopError ->
+            Text.IO.putStrLn "(model error; see message above if the library reported a parse failure)"
+        | otherwise ->
+            Text.IO.putStrLn $
+              "(empty reply; stop_reason="
+                <> Text.pack (show sr)
+                <> ". If you only see [thinking], raise soMax_tokens / max_tokens.)"
+      _ -> do
+        traverse_ printAssistantBlock bs
+        Text.IO.putStrLn ""
   EvTurnEnd {} -> pure ()
   EvAgentEnd {} -> pure ()
   _ -> pure ()
