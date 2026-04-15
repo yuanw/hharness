@@ -19,7 +19,7 @@ module PiAgent.Claude (
 import Control.Concurrent.Async (async)
 import Control.Exception (SomeException, try)
 import Control.Monad (when)
-import Data.Aeson (Result (..), Value (Array, Object, String), eitherDecode, encode, fromJSON)
+import Data.Aeson (Result (..), Value (..), eitherDecode, encode, fromJSON)
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Lazy qualified as LBS
 import Data.Int (Int64)
@@ -172,10 +172,41 @@ createMessageCompat baseUrl apiKey mAnthropicVersion req = do
   val <- case eitherDecode body of
     Left err -> ioError $ userError $ "JSON decode: " ++ err
     Right (v :: Value) -> pure v
-  let fixed = patchThinkingSignatures val
+  let fixed = patchThinkingSignatures (patchProxyNullArrays val)
   case fromJSON fixed of
     Error err -> ioError $ userError $ "MessageResponse: " ++ err
     Success msg -> pure msg
+
+-- | Gateways may send @null@ where Anthropic sends @[]@ for vector-shaped fields.
+patchProxyNullArrays :: Value -> Value
+patchProxyNullArrays v = case v of
+  Object o ->
+    let o1 = KM.map patchProxyNullArrays o
+        o2 = patchMessageResponseContent o1
+        o3 = patchToolReferences o2
+        o4 = patchCodeExecutionResultContent o3
+     in Object o4
+  Array a -> Array $ V.map patchProxyNullArrays a
+  _ -> v
+  where
+    -- 'MessageResponse' expects @content :: Vector ContentBlock@.
+    patchMessageResponseContent o =
+      case (KM.lookup "content" o, KM.lookup "usage" o) of
+        (Just Null, Just _) -> KM.insert "content" (Array V.empty) o
+        _ -> o
+    -- 'ToolSearchResult' expects @tool_references :: Vector …@.
+    patchToolReferences o =
+      case KM.lookup "tool_references" o of
+        Just Null -> KM.insert "tool_references" (Array V.empty) o
+        _ -> o
+    -- 'CodeExecutionResult' expects @content :: Vector Value@.
+    patchCodeExecutionResultContent o
+      | KM.member "stdout" o
+          && KM.member "stderr" o
+          && KM.member "return_code" o
+      , Just Null <- KM.lookup "content" o =
+          KM.insert "content" (Array V.empty) o
+      | otherwise = o
 
 -- | Proxies sometimes omit @\"signature\"@ on @type: \"thinking\"@ blocks.
 patchThinkingSignatures :: Value -> Value
@@ -184,6 +215,8 @@ patchThinkingSignatures v = case v of
     let oRecursed = KM.map patchThinkingSignatures o
      in case (KM.lookup "type" oRecursed, KM.lookup "signature" oRecursed) of
           (Just (String "thinking"), Nothing) ->
+            Object $ KM.insert "signature" (String "") oRecursed
+          (Just (String "thinking"), Just Null) ->
             Object $ KM.insert "signature" (String "") oRecursed
           _ -> Object oRecursed
   Array a -> Array $ V.map patchThinkingSignatures a
