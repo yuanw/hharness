@@ -5,7 +5,7 @@ repl-result-*
 
 # direnv (often used with Nix flakes)
 .direnv/
-
+.pre-commit-config.yaml
 # Haskell (Cabal, GHC, Stack)
 dist/
 dist-*
