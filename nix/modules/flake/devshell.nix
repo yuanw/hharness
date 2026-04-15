@@ -18,8 +18,11 @@
           cabal-install
           ghc
           ghciwatch
-          zlib
+          pkg-config
         ];
+        # Needed so GHC/cabal can link transitive C deps (e.g. zlib via claude → tls).
+        # `packages` alone does not run library setup hooks; `buildInputs` does.
+        buildInputs = [ pkgs.zlib ];
         shellHook = ''
           export LIBRARY_PATH="${pkgs.zlib}/lib''${LIBRARY_PATH:+:}''${LIBRARY_PATH}"
           export CPATH="${pkgs.zlib.dev}/include''${CPATH:+:}''${CPATH}"
