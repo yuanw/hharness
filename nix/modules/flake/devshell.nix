@@ -18,7 +18,12 @@
           cabal-install
           ghc
           ghciwatch
+          zlib
         ];
+        shellHook = ''
+          export LIBRARY_PATH="${pkgs.zlib}/lib''${LIBRARY_PATH:+:}''${LIBRARY_PATH}"
+          export CPATH="${pkgs.zlib.dev}/include''${CPATH:+:}''${CPATH}"
+        '';
       };
     };
 }
