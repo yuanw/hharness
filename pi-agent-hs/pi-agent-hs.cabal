@@ -51,21 +51,6 @@ library
 
   hs-source-dirs:  src
 
-executable ampcode-files-agent
-  import:         shared
-  main-is:        AmpcodeFilesAgent.hs
-  hs-source-dirs: app
-  build-depends:
-    , aeson        ^>=2.1  || ^>=2.2
-    , base         ^>=4.17 || ^>=4.18 || ^>=4.19 || ^>=4.20
-    , bytestring   ^>=0.11 || ^>=0.12
-    , claude       ^>=1.4
-    , directory    ^>=1.3
-    , filepath     ^>=1.4  || ^>=1.5
-    , pi-agent-hs
-    , text         ^>=1.2  || ^>=2.0  || ^>=2.1
-    , time         ^>=1.12
-
 test-suite pi-agent-hs-test
   import:         shared
   type:           exitcode-stdio-1.0
