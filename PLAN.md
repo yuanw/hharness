@@ -300,42 +300,117 @@ Add to `AgentLoopConfig`:
 
 Port `packages/tui/src/*.ts`. This is ~25 files of terminal rendering infrastructure.
 
-### 4.1 Core Abstractions
+### 4.1 Use `brick` (built on `vty`)
+
+The original pi-tui builds its own differential renderer, overlay system, focus management, and component model from scratch on raw terminal I/O. In Haskell, **`brick`** already provides all of this:
+
+- **Differential rendering**: `brick` uses `vty` underneath and handles double-buffering and screen diffs automatically. `brick`'s `render` produces a `Picture` each frame, and `vty` diffs it against the last frame — exactly what pi-tui's `doRender()` does.
+- **Component/Widget model**: pi-tui's `Component` interface (`render(width) -> string[]`, `handleInput`) maps directly to `brick`'s `Widget` plus event handling. Every pi-tui component (Box, Text, Input, Editor, SelectList, Markdown, etc.) becomes a `brick` `Widget`.
+- **Overlay system**: pi-tui's overlay stack with anchoring, positioning, focus management, and z-ordering maps to `brick`'s layered rendering. Overlays that capture focus become modal dialogs; non-capturing overlays become background layers.
+- **Key handling**: pi-tui's Kitty keyboard protocol support maps to `vty`'s `Event` type, which already handles Kitty and extended key sequences.
+- **Focus management**: pi-tui's `focused` flag and `setFocus()` map to `brick`'s `FocusRing`.
+- **Cursor positioning**: pi-tui's `CURSOR_MARKER` maps to `brick`'s `ShowCursor` / `CursorPosition`.
+- **Image support**: pi-tui's terminal image protocol support (SIXEL, Kitty, etc.) can be layered on top of `vty`'s raw output, same as pi-tui does.
+
+Using `brick` saves writing ~1500 lines of terminal rendering infrastructure that pi-tui reimplements.
+
+### 4.2 Core Architecture
 
 ```haskell
-class Component c where
-  render    :: c -> Int -> [Text]    -- width -> lines
-  handleInput :: c -> Text -> Maybe c  -- optional key handling
-  invalidate :: c -> c               -- clear cached state
+-- | The main TUI application state
+data AppState = AppState
+  { appAgent         :: MVar AgentSession
+  , appExtensions    :: ExtensionRunner
+  , appSessionMgr    :: SessionManager
+  , appSettings      :: SettingsManager
+  , appTheme         :: Theme
+  , appKeybindings   :: KeybindingsConfig
+  , appMode          :: AppMode
+  , appFocusedWidget :: FocusRing ResourceName
+  }
 
-data TUI = TUI
-  { tuiTerminal    :: TerminalHandle
-  , tuiWidth       :: IORef Int
-  , tuiHeight      :: IORef Int
-  , tuiFocused     :: IORef (Maybe Component)
-  , tuiInputListeners :: IORef [InputListener]
-  , tuiOverlays    :: IORef [Overlay]
-  , tuiRunning     :: IORef Bool
+data AppMode
+  = ModeChat
+  | ModeEditor
+  | ModeSelector
+  | ModeOverlay OverlayState
+
+data ResourceName
+  = EditorInput
+  | MessageViewport
+  | ToolOutputView
+  | StatusBar
+  | ModelSelector
+  | SessionSelector
+  deriving (Show, Eq, Ord)
+
+-- | The brick App definition
+app :: App AppState AppEvent ResourceName
+app = App
+  { appDraw         = drawApp
+  , appChooseCursor = showFirstCursor
+  , appHandleEvent  = handleAppEvent
+  , appStartEvent   = appStart
+  , appAttrMap      = attrMapFromTheme
   }
 ```
 
-### 4.2 Key Subsystems
+### 4.3 Key Subsystems
 
-| TS module | Haskell module | Notes |
+| TS module | Haskell module | brick equivalent |
 |---|---|---|
-| `terminal.ts` | `PiTui.Terminal` | Raw terminal I/O via `haskeline` or `vty` |
-| `tui.ts` | `PiTui.TUI` | Main loop, diff rendering |
-| `keys.ts` | `PiTui.Keys` | Kitty keyboard protocol |
-| `keybindings.ts` | `PiTui.Keybindings` | Configurable keybinding maps |
-| `fuzzy.ts` | `PiTui.Fuzzy` | Fuzzy matching |
-| `autocomplete.ts` | `PiTui.Autocomplete` | Tab completion |
-| `components/*.ts` | `PiTui.Component.*` | Box, Editor, Input, Markdown, SelectList, etc. |
+| `terminal.ts` | Uses `vty` directly through brick | `vty` handles raw terminal, resize, alt screen |
+| `tui.ts` | `PiTui.App` | `brick` `App` handles main loop, diff rendering, focus, overlays |
+| `keys.ts` | `vty` key event parsing | `vty` already handles Kitty protocol and extended keys |
+| `keybindings.ts` | `PiTui.Keybindings` | Configurable keybinding map checked in `handleEvent` |
+| `fuzzy.ts` | `PiTui.Fuzzy` | Pure fuzzy matching (used in selectors) |
+| `autocomplete.ts` | `PiTui.Autocomplete` | Completion overlay widget |
+| `components/*.ts` | `PiTui.Widget.*` | Each becomes a `Widget n` |
+| `stdin-buffer.ts` | N/A | `brick` handles input buffering |
+| `editor-component.ts` | `PiTui.Widget.Editor` | Extend `Brick.Widgets.Edit.Editor` (multiline) |
+| `image.ts` | `PiTui.Image` | SIXEL/Kitty image protocol on top of `vty` raw output |
 
-### 4.3 Implementation Strategy
+### 4.4 Component Mapping
 
-Use **`vty`** as the underlying terminal library — it handles resize signals, alternate screen buffer, and mouse/keyboard events. Build the differential renderer on top of `vty` output.
+| pi-tui Component | Haskell Widget | brick Primitive |
+|---|---|---|
+| `Box` | `PiTui.Widget.Box` | `hBox` / `vBox` / `vLimit` / `hLimit` |
+| `Text` | `PiTui.Widget.Text` | `txt` / `txtWrap` |
+| `Input` | `PiTui.Widget.Input` | Custom `Editor` widget with single-line mode |
+| `Editor` | `PiTui.Widget.Editor` | Extend `Brick.Widgets.Edit.Editor` (multiline) |
+| `SelectList` | `PiTui.Widget.SelectList` | `Brick.Widgets.List` with custom rendering |
+| `Markdown` | `PiTui.Widget.Markdown` | Custom renderer (ANSI-colored, word-wrapped) |
+| `Spacer` | `PiTui.Widget.Spacer` | `fill` / `padLeftRight` |
+| `Loader` | `PiTui.Widget.Loader` | Spinner animation in `Widget` |
+| `Image` | `PiTui.Widget.Image` | Raw escape sequence output via `vty` |
+| `TruncatedText` | `PiTui.Widget.TruncatedText` | `visibleWidth` truncation on `txt` |
+| Overlays (Modal) | `PiTui.Overlay` | Render layer in `appDraw` (priority ordering) |
 
-Alternative: use `brick` for the widget set and build custom rendering on top. However, `brick`'s rendering model is immediate-mode, which doesn't match the differential approach in pi-tui. Pure `vty` gives more control.
+### 4.5 Image and Terminal Protocol Support
+
+pi-tui supports inline images (SIXEL, Kitty, iTerm2 protocols). This is the one area where `brick` has no built-in support. Implementation:
+
+1. Query terminal capabilities on startup (like pi-tui's `terminal-image.ts`)
+2. Store cell dimensions for aspect-ratio-correct rendering
+3. Insert raw escape sequences into `vty` output using escape passthrough
+4. `brick`'s `Widget` rendering can include raw `vty` image bytes interleaved with text content
+
+### 4.6 Keybinding Configuration
+
+pi-tui has a rich keybinding system (`keybindings.ts`) with per-action bindings, key conflicts, and user customization. Port this as `PiTui.Keybindings` integrating with `brick`'s event handling:
+
+```haskell
+data KeybindingsConfig = KeybindingsConfig
+  { kbBindings :: Map ActionName [KeyId]
+  , kbConflicts :: [KeyConflict]
+  }
+
+data KeyId = KeyId { keyText :: Text }
+  deriving (Show, Eq, Ord)
+
+matchesKey :: Vty.Event -> KeyId -> Bool
+matchesKey (Vty.EvKey k mods) kid = ...
+```
 
 ---
 
@@ -735,7 +810,7 @@ pi-agent-core
   └── pi-ai, aeson, stm, async, containers, text, time
 
 pi-tui
-  └── vty, text, containers, stm, unix, bytestring, terminfo-hs
+  └── brick, vty, text, containers, stm, unix, bytestring, vector, microlens
 
 pi-coding-agent
   └── pi-agent-core, pi-ai, pi-tui, aeson, stm, async,
@@ -752,11 +827,11 @@ pi-coding-agent
 | **1** | `pi-ai` | Types, EventStream, Anthropic provider (port `PiAgent.Claude`), API registry, Faux provider |
 | **2** | `pi-ai` | OpenAI provider (both completions and responses APIs using MercuryTechnologies/openai) |
 | **3** | `pi-agent-core` | Evolve existing: upgrade AgentTool, add QueueMode, onPayload/onResponse hooks, CustomMessage support |
-| **4** | `pi-tui` | Terminal, TUI main loop, key handling, basic components (Box, Text, Input, SelectList) |
+| **4** | `pi-tui` | Brick app skeleton, key handling, basic widgets (Box, Text, Input, SelectList) |
 | **5** | `pi-coding-agent` | CLI skeleton, session manager, tools (bash, read, edit, write), system prompt builder |
 | **6** | `pi-coding-agent` | Extension system (Types, Runner, Loader for compiled-in extensions) |
 | **7** | `pi-coding-agent` | Lua extension backend, config loading, slash commands |
-| **8** | `pi-tui` | Advanced components (Markdown, Editor, autocomplete, overlays) |
+| **8** | `pi-tui` | Advanced widgets (Markdown rendering, multiline Editor, autocomplete, overlays, images) |
 | **9** | `pi-coding-agent` | Interactive mode (full TUI), compaction, model cycling |
 | **10** | `pi-coding-agent` | RPC mode, print mode, authentication flows |
 
@@ -766,7 +841,7 @@ pi-coding-agent
 
 - **pi-ai**: Unit tests for Anthropic and OpenAI provider request/response serialization. Integration tests against real APIs. The Faux provider is used for agent loop tests without API keys.
 - **pi-agent-core**: Property-based tests (QuickCheck) for the agent loop. Unit tests for state transitions.
-- **pi-tui**: Terminal output snapshots. Use `vty` test infrastructure.
+- **pi-tui**: Widget rendering and event handling tests using `brick`'s test infrastructure (`Brick.Test`) and `vty` image snapshots.
 - **pi-coding-agent**: End-to-end tests with the `faux` provider (the existing pi-ai faux provider pattern). Golden tests for session serialization.
 
 ---
