@@ -150,27 +150,66 @@ unregisterApiProviders :: ApiRegistry -> Text -> IO ()
 
 ### 2.5 Provider Implementations (`PiAi.Provider.*`)
 
-Each provider is a separate module:
+We initially target two providers — Anthropic and OpenAI — plus a faux provider for testing. The registry pattern makes adding more providers straightforward later.
 
-| Module | API |
-|---|---|
-| `PiAi.Provider.Anthropic` | `anthropic-messages` |
-| `PiAi.Provider.OpenAICompletions` | `openai-completions` |
-| `PiAi.Provider.OpenAIResponses` | `openai-responses` |
-| `PiAi.Provider.Google` | `google-generative-ai` |
-| `PiAi.Provider.Bedrock` | `bedrock-converse-stream` |
-| `PiAi.Provider.Mistral` | `mistral-conversations` |
-| `PiAi.Provider.Faux` | `faux` (testing) |
+| Module | API | Notes |
+|---|---|---|
+| `PiAi.Provider.Anthropic` | `anthropic-messages` | Uses [MercuryTechnologies/claude](https://github.com/MercuryTechnologies/claude) Haskell package. Already implemented in `PiAgent.Claude`; port to `pi-ai`. |
+| `PiAi.Provider.OpenAI` | `openai-responses` + `openai-completions` | Uses [MercuryTechnologies/openai](https://github.com/MercuryTechnologies/openai) Haskell package. Supports completions, responses, and streaming SSE. |
+| `PiAi.Provider.Faux` | `faux` | Testing provider that returns canned responses without calling any API. |
 
 Each registers itself into the `ApiRegistry` at init time.
 
-**Streaming**: Use `http-conduit` / `aeson` streaming parsing. Each provider emits `AssistantMessageEvent` values into an `EventStream`.
+#### Anthropic Provider (`PiAi.Provider.Anthropic`)
 
-**Authentication**: `PiAi.Auth` module resolves API keys from env vars, credential files, and runtime resolution callbacks.
+The existing `PiAgent.Claude` module already implements `StreamFn` via Mercury's `claude` package. Port this to `pi-ai` with the following improvements:
+
+- Support streaming (SSE) in addition to the current blocking `createMessage` call
+- Map `MessageResponse` content blocks to `AssistantMessageEvent` values
+- Handle thinking blocks, tool-use blocks, and redacted-thinking blocks
+- Support `claudeStreamFnCompat` for proxies that omit `signature` on thinking blocks
+- API key resolution from `ANTHROPIC_API_KEY` env var, `~/.pi/auth.json`, or runtime callback
+- Base URL override from `ANTHROPIC_BASE_URL` env var
+
+#### OpenAI Provider (`PiAi.Provider.OpenAI`)
+
+Uses [MercuryTechnologies/openai](https://github.com/MercuryTechnologies/openai) which provides:
+
+- Types for the OpenAI Chat Completions API (`/v1/chat/completions`)
+- Types for the OpenAI Responses API (`/v1/responses`)
+- Streaming SSE support
+- Tool/function calling
+
+The provider will implement two API identifiers:
+
+1. **`openai-completions`** — Chat Completions API. Maps to the `openai` package's `CreateChatCompletionRequest` / streaming types.
+2. **`openai-responses`** — Responses API. Maps to the `openai` package's `CreateResponseRequest` types.
+
+Key responsibilities:
+
+- Convert `Message` to OpenAI message format (`PiAi.Provider.OpenAI.Convert`)
+- Handle streaming SSE events, mapping deltas to `AssistantMessageEvent`
+- Support `store`, `reasoning_effort`, `developer` role, and other compat options
+- API key from `OPENAI_API_KEY` env var or runtime callback
+- Base URL override for Azure, OpenRouter, and other OpenAI-compatible providers
+- Handle model-specific behavior (GPT-4, o1/o3 reasoning, etc.)
+
+#### Faux Provider (`PiAi.Provider.Faux`)
+
+Port the TypeScript `faux` provider for deterministic testing. Returns canned assistant messages with configurable delays, stop reasons, and tool calls. Essential for unit testing the agent loop without API calls.
+
+**Streaming**: Both Anthropic and OpenAI providers emit `AssistantMessageEvent` values into an `EventStream` via SSE parsing. The `http-conduit` and `aeson` packages handle HTTP and JSON; the `openai` and `claude` packages handle provider-specific response types.
+
+**Authentication**: `PiAi.Auth` module resolves API keys from environment variables, credential files (`~/.pi/auth.json`), and runtime resolution callbacks.
 
 ### 2.6 Model Generation (`PiAi.Models`)
 
-Port `scripts/generate-models.ts` to a Haskell executable that scrapes provider model lists and writes a `models.generated.hs` data file. At runtime, `PiAi.Models.getModels` reads either the embedded data or a `models.json` from disk.
+Hard-code model metadata for the two supported providers in a Haskell data file. Initially cover:
+
+- **Anthropic**: `claude-sonnet-4-5-20250514`, `claude-opus-4-5-20250514`, etc.
+- **OpenAI**: `gpt-4o`, `gpt-4o-mini`, `o1-pro`, `o3-mini`, etc.
+
+At runtime, `PiAi.Models.getModels` reads either the embedded data or a `models.json` from disk (allowing users to add custom endpoints). A future generator executable can scrape provider APIs, but is not required initially.
 
 ---
 
@@ -688,8 +727,9 @@ main = do
 
 ```
 pi-ai
-  └── aeson, http-conduit, http-client-tls, bytestring, text,
-       containers, stm, async, time, vector, memory, cryptohash
+  ├── aeson, bytestring, text, containers, stm, async, time, vector
+  ├── http-conduit, http-client-tls, http-types
+  └── claude (MercuryTechnologies/claude), openai (MercuryTechnologies/openai)
 
 pi-agent-core
   └── pi-ai, aeson, stm, async, containers, text, time
@@ -709,9 +749,9 @@ pi-coding-agent
 
 | Phase | Package | Milestone |
 |---|---|---|
-| **1** | `pi-ai` | Types, EventStream, Anthropic provider, API registry |
-| **2** | `pi-agent-core` | Evolve existing: upgrade AgentTool, add QueueMode, onPayload/onResponse hooks, CustomMessage support |
-| **3** | `pi-ai` | OpenAI, Google, Bedrock providers |
+| **1** | `pi-ai` | Types, EventStream, Anthropic provider (port `PiAgent.Claude`), API registry, Faux provider |
+| **2** | `pi-ai` | OpenAI provider (both completions and responses APIs using MercuryTechnologies/openai) |
+| **3** | `pi-agent-core` | Evolve existing: upgrade AgentTool, add QueueMode, onPayload/onResponse hooks, CustomMessage support |
 | **4** | `pi-tui` | Terminal, TUI main loop, key handling, basic components (Box, Text, Input, SelectList) |
 | **5** | `pi-coding-agent` | CLI skeleton, session manager, tools (bash, read, edit, write), system prompt builder |
 | **6** | `pi-coding-agent` | Extension system (Types, Runner, Loader for compiled-in extensions) |
@@ -724,7 +764,7 @@ pi-coding-agent
 
 ## 8. Testing Strategy
 
-- **pi-ai**: Unit tests for each provider's request/response serialization. Integration tests against real APIs (like existing `stream.test.ts`).
+- **pi-ai**: Unit tests for Anthropic and OpenAI provider request/response serialization. Integration tests against real APIs. The Faux provider is used for agent loop tests without API keys.
 - **pi-agent-core**: Property-based tests (QuickCheck) for the agent loop. Unit tests for state transitions.
 - **pi-tui**: Terminal output snapshots. Use `vty` test infrastructure.
 - **pi-coding-agent**: End-to-end tests with the `faux` provider (the existing pi-ai faux provider pattern). Golden tests for session serialization.
