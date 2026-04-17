@@ -1,8 +1,8 @@
-# Plan: Re-implementing pi-mono in Haskell
+# Plan: hharness — Re-implementing pi-mono in Haskell
 
 > Based on a thorough study of the TypeScript source at
 > https://github.com/badlogic/pi-mono (ignoring pi-mom, pi-web-ui, pi-pods)
-> and the existing Haskell seed at pi-agent-hs.
+> and the existing Haskell seed (formerly pi-agent-hs, now hharness-agent).
 
 ---
 
@@ -12,28 +12,28 @@ The TypeScript monorepo has four relevant packages:
 
 | TS Package | Purpose | Haskell Target |
 |---|---|---|
-| `@mariozechner/pi-ai` | Unified multi-provider LLM streaming API (OpenAI, Anthropic, Google, etc.) | `pi-ai` |
-| `@mariozechner/pi-agent-core` | Stateful agent loop with tool calling, hooks, steering/follow-up queues | `pi-agent-core` (existing `pi-agent-hs`, renamed & expanded) |
-| `@mariozechner/pi-tui` | Terminal UI library with differential rendering, overlays, components | `pi-tui` |
-| `@mariozechner/pi-coding-agent` | Interactive coding agent CLI, extensions, sessions, tools | `pi-coding-agent` |
+| `@mariozechner/pi-ai` | Unified multi-provider LLM streaming API (OpenAI, Anthropic, Google, etc.) | `hharness-ai` |
+| `@mariozechner/pi-agent-core` | Stateful agent loop with tool calling, hooks, steering/follow-up queues | `hharness-agent` |
+| `@mariozechner/pi-tui` | Terminal UI library with differential rendering, overlays, components | `hharness-tui` |
+| `@mariozechner/pi-coding-agent` | Interactive coding agent CLI, extensions, sessions, tools | `hharness-coding` |
 
 The Haskell project will mirror this as a cabal/stack multi-package repo:
 
 ```
-pi-mono-hs/
+hharness/
   cabal.project
-  pi-ai/          -- LLM provider library
-  pi-agent-core/  -- Agent loop & stateful Agent (evolved from current pi-agent-hs)
-  pi-tui/          -- Terminal UI library
-  pi-coding-agent/ -- Coding agent CLI + extension system
-  pi-coding-agent-extensions/  -- Built-in extension examples
+  hharness-ai/          -- LLM provider library
+  hharness-agent/      -- Agent loop & stateful Agent
+  hharness-tui/          -- Terminal UI library
+  hharness-coding/ -- Coding agent CLI + extension system
+  hharness-coding-extensions/  -- Built-in extension examples
 ```
 
 ---
 
-## 2. Package: `pi-ai` — Multi-Provider LLM API
+## 2. Package: `hharness-ai` — Multi-Provider LLM API
 
-### 2.1 Core Types (`PiAi.Types`)
+### 2.1 Core Types (`HHAi.Types`)
 
 Mirror the TypeScript `packages/ai/src/types.ts`:
 
@@ -93,9 +93,9 @@ data Context = Context
   }
 ```
 
-### 2.2 Event Stream (`PiAi.Stream`)
+### 2.2 Event Stream (`HHAi.Stream`)
 
-The TypeScript `EventStream<Event, Result>` is an async push/pull stream. The existing `PiAgent.Stream` uses `TQueue (Maybe event)` + `TMVar result`, which is a good match. Reuse and generalize:
+The TypeScript `EventStream<Event, Result>` is an async push/pull stream. The existing `HHAgent.Stream` uses `TQueue (Maybe event)` + `TMVar result`, which is a good match. Reuse and generalize:
 
 ```haskell
 data EventStream event result = EventStream
@@ -109,7 +109,7 @@ endStream         :: EventStream event result -> result -> IO ()
 foldStream        :: EventStream event result -> (event -> IO ()) -> IO result
 ```
 
-### 2.3 Streaming Events (`PiAi.Events`)
+### 2.3 Streaming Events (`HHAi.Events`)
 
 ```haskell
 data AssistantMessageEvent
@@ -127,7 +127,7 @@ data AssistantMessageEvent
   | EvError StopReason Text AssistantMessage
 ```
 
-### 2.4 API Registry (`PiAi.Registry`)
+### 2.4 API Registry (`HHAi.Registry`)
 
 Mirror the TypeScript `api-registry.ts` pattern — a global `IORef (Map Api ProviderFn)` keyed by API identifier:
 
@@ -148,30 +148,30 @@ getApiProvider    :: ApiRegistry -> Text -> IO (Maybe ApiProvider)
 unregisterApiProviders :: ApiRegistry -> Text -> IO ()
 ```
 
-### 2.5 Provider Implementations (`PiAi.Provider.*`)
+### 2.5 Provider Implementations (`HHAi.Provider.*`)
 
 We initially target two providers — Anthropic and OpenAI — plus a faux provider for testing. The registry pattern makes adding more providers straightforward later.
 
 | Module | API | Notes |
 |---|---|---|
-| `PiAi.Provider.Anthropic` | `anthropic-messages` | Uses [MercuryTechnologies/claude](https://github.com/MercuryTechnologies/claude) Haskell package. Already implemented in `PiAgent.Claude`; port to `pi-ai`. |
-| `PiAi.Provider.OpenAI` | `openai-responses` + `openai-completions` | Uses [MercuryTechnologies/openai](https://github.com/MercuryTechnologies/openai) Haskell package. Supports completions, responses, and streaming SSE. |
-| `PiAi.Provider.Faux` | `faux` | Testing provider that returns canned responses without calling any API. |
+| `HHAi.Provider.Anthropic` | `anthropic-messages` | Uses [MercuryTechnologies/claude](https://github.com/MercuryTechnologies/claude) Haskell package. Already implemented in `HHAgent.Claude`; port to `hharness-ai`. |
+| `HHAi.Provider.OpenAI` | `openai-responses` + `openai-completions` | Uses [MercuryTechnologies/openai](https://github.com/MercuryTechnologies/openai) Haskell package. Supports completions, responses, and streaming SSE. |
+| `HHAi.Provider.Faux` | `faux` | Testing provider that returns canned responses without calling any API. |
 
 Each registers itself into the `ApiRegistry` at init time.
 
-#### Anthropic Provider (`PiAi.Provider.Anthropic`)
+#### Anthropic Provider (`HHAi.Provider.Anthropic`)
 
-The existing `PiAgent.Claude` module already implements `StreamFn` via Mercury's `claude` package. Port this to `pi-ai` with the following improvements:
+The existing `HHAgent.Claude` module already implements `StreamFn` via Mercury's `claude` package. Port this to `hharness-ai` with the following improvements:
 
 - Support streaming (SSE) in addition to the current blocking `createMessage` call
 - Map `MessageResponse` content blocks to `AssistantMessageEvent` values
 - Handle thinking blocks, tool-use blocks, and redacted-thinking blocks
 - Support `claudeStreamFnCompat` for proxies that omit `signature` on thinking blocks
-- API key resolution from `ANTHROPIC_API_KEY` env var, `~/.pi/auth.json`, or runtime callback
+- API key resolution from `ANTHROPIC_API_KEY` env var, `~/.hharness/auth.json`, or runtime callback
 - Base URL override from `ANTHROPIC_BASE_URL` env var
 
-#### OpenAI Provider (`PiAi.Provider.OpenAI`)
+#### OpenAI Provider (`HHAi.Provider.OpenAI`)
 
 Uses [MercuryTechnologies/openai](https://github.com/MercuryTechnologies/openai) which provides:
 
@@ -187,43 +187,43 @@ The provider will implement two API identifiers:
 
 Key responsibilities:
 
-- Convert `Message` to OpenAI message format (`PiAi.Provider.OpenAI.Convert`)
+- Convert `Message` to OpenAI message format (`HHAi.Provider.OpenAI.Convert`)
 - Handle streaming SSE events, mapping deltas to `AssistantMessageEvent`
 - Support `store`, `reasoning_effort`, `developer` role, and other compat options
 - API key from `OPENAI_API_KEY` env var or runtime callback
 - Base URL override for Azure, OpenRouter, and other OpenAI-compatible providers
 - Handle model-specific behavior (GPT-4, o1/o3 reasoning, etc.)
 
-#### Faux Provider (`PiAi.Provider.Faux`)
+#### Faux Provider (`HHAi.Provider.Faux`)
 
 Port the TypeScript `faux` provider for deterministic testing. Returns canned assistant messages with configurable delays, stop reasons, and tool calls. Essential for unit testing the agent loop without API calls.
 
 **Streaming**: Both Anthropic and OpenAI providers emit `AssistantMessageEvent` values into an `EventStream` via SSE parsing. The `http-conduit` and `aeson` packages handle HTTP and JSON; the `openai` and `claude` packages handle provider-specific response types.
 
-**Authentication**: `PiAi.Auth` module resolves API keys from environment variables, credential files (`~/.pi/auth.json`), and runtime resolution callbacks.
+**Authentication**: `HHAi.Auth` module resolves API keys from environment variables, credential files (`~/.hharness/auth.json`), and runtime resolution callbacks.
 
-### 2.6 Model Generation (`PiAi.Models`)
+### 2.6 Model Generation (`HHAi.Models`)
 
 Hard-code model metadata for the two supported providers in a Haskell data file. Initially cover:
 
 - **Anthropic**: `claude-sonnet-4-5-20250514`, `claude-opus-4-5-20250514`, etc.
 - **OpenAI**: `gpt-4o`, `gpt-4o-mini`, `o1-pro`, `o3-mini`, etc.
 
-At runtime, `PiAi.Models.getModels` reads either the embedded data or a `models.json` from disk (allowing users to add custom endpoints). A future generator executable can scrape provider APIs, but is not required initially.
+At runtime, `HHAi.Models.getModels` reads either the embedded data or a `models.json` from disk (allowing users to add custom endpoints). A future generator executable can scrape provider APIs, but is not required initially.
 
 ---
 
-## 3. Package: `pi-agent-core` — Agent Loop & Stateful Agent
+## 3. Package: `hharness-agent` — Agent Loop & Stateful Agent
 
-This package already has a solid seed in `pi-agent-hs`. The plan is to evolve it.
+This package already has a solid seed in the existing `hharness-agent` codebase. The plan is to evolve it.
 
 ### 3.1 What Exists
 
-- `PiAgent.Types` — Core types (Messages, ToolCall, AgentTool, hooks, events)
-- `PiAgent.Stream` — STM-backed EventStream
-- `PiAgent.AgentLoop` — Pure agent loop (runAgentLoop, runAgentLoopContinue)
-- `PiAgent.Agent` — Stateful Agent wrapper with TVar-based state, subscribers, queues
-- `PiAgent.Claude` — Anthropic provider bridge
+- `HHAgent.Types` — Core types (Messages, ToolCall, AgentTool, hooks, events)
+- `HHAgent.Stream` — STM-backed EventStream
+- `HHAgent.AgentLoop` — Pure agent loop (runAgentLoop, runAgentLoopContinue)
+- `HHAgent.Agent` — Stateful Agent wrapper with TVar-based state, subscribers, queues
+- `HHAgent.Claude` — Anthropic provider bridge
 
 ### 3.2 What Needs Evolving
 
@@ -272,7 +272,7 @@ Already exists as `Sequential | Parallel`. Match the TypeScript preflight-then-e
 
 #### 3.2.4 Steering and Follow-Up Queues
 
-Already in `PiAgent.Agent`. Add `QueueMode`:
+Already in `HHAgent.Agent`. Add `QueueMode`:
 
 ```haskell
 data QueueMode = All | OneAtATime
@@ -296,23 +296,23 @@ Add to `AgentLoopConfig`:
 
 ---
 
-## 4. Package: `pi-tui` — Terminal UI Library
+## 4. Package: `hharness-tui` — Terminal UI Library
 
 Port `packages/tui/src/*.ts`. This is ~25 files of terminal rendering infrastructure.
 
 ### 4.1 Use `brick` (built on `vty`)
 
-The original pi-tui builds its own differential renderer, overlay system, focus management, and component model from scratch on raw terminal I/O. In Haskell, **`brick`** already provides all of this:
+The original TypeScript pi-tui builds its own differential renderer, overlay system, focus management, and component model from scratch on raw terminal I/O. In Haskell, **`brick`** already provides all of this:
 
-- **Differential rendering**: `brick` uses `vty` underneath and handles double-buffering and screen diffs automatically. `brick`'s `render` produces a `Picture` each frame, and `vty` diffs it against the last frame — exactly what pi-tui's `doRender()` does.
-- **Component/Widget model**: pi-tui's `Component` interface (`render(width) -> string[]`, `handleInput`) maps directly to `brick`'s `Widget` plus event handling. Every pi-tui component (Box, Text, Input, Editor, SelectList, Markdown, etc.) becomes a `brick` `Widget`.
-- **Overlay system**: pi-tui's overlay stack with anchoring, positioning, focus management, and z-ordering maps to `brick`'s layered rendering. Overlays that capture focus become modal dialogs; non-capturing overlays become background layers.
-- **Key handling**: pi-tui's Kitty keyboard protocol support maps to `vty`'s `Event` type, which already handles Kitty and extended key sequences.
-- **Focus management**: pi-tui's `focused` flag and `setFocus()` map to `brick`'s `FocusRing`.
-- **Cursor positioning**: pi-tui's `CURSOR_MARKER` maps to `brick`'s `ShowCursor` / `CursorPosition`.
-- **Image support**: pi-tui's terminal image protocol support (SIXEL, Kitty, etc.) can be layered on top of `vty`'s raw output, same as pi-tui does.
+- **Differential rendering**: `brick` uses `vty` underneath and handles double-buffering and screen diffs automatically. `brick`'s `render` produces a `Picture` each frame, and `vty` diffs it against the last frame — exactly what the TypeScript pi-tui's `doRender()` does.
+- **Component/Widget model**: the TypeScript pi-tui's `Component` interface (`render(width) -> string[]`, `handleInput`) maps directly to `brick`'s `Widget` plus event handling. Every TypeScript pi-tui component (Box, Text, Input, Editor, SelectList, Markdown, etc.) becomes a `brick` `Widget`.
+- **Overlay system**: the TypeScript pi-tui's overlay stack with anchoring, positioning, focus management, and z-ordering maps to `brick`'s layered rendering. Overlays that capture focus become modal dialogs; non-capturing overlays become background layers.
+- **Key handling**: the TypeScript pi-tui's Kitty keyboard protocol support maps to `vty`'s `Event` type, which already handles Kitty and extended key sequences.
+- **Focus management**: the TypeScript pi-tui's `focused` flag and `setFocus()` map to `brick`'s `FocusRing`.
+- **Cursor positioning**: the TypeScript pi-tui's `CURSOR_MARKER` maps to `brick`'s `ShowCursor` / `CursorPosition`.
+- **Image support**: the TypeScript pi-tui's terminal image protocol support (SIXEL, Kitty, etc.) can be layered on top of `vty`'s raw output, same as pi-tui does.
 
-Using `brick` saves writing ~1500 lines of terminal rendering infrastructure that pi-tui reimplements.
+Using `brick` saves writing ~1500 lines of terminal rendering infrastructure that the original TypeScript pi-tui reimplements.
 
 ### 4.2 Core Architecture
 
@@ -360,44 +360,44 @@ app = App
 | TS module | Haskell module | brick equivalent |
 |---|---|---|
 | `terminal.ts` | Uses `vty` directly through brick | `vty` handles raw terminal, resize, alt screen |
-| `tui.ts` | `PiTui.App` | `brick` `App` handles main loop, diff rendering, focus, overlays |
+| `tui.ts` | `HHTui.App` | `brick` `App` handles main loop, diff rendering, focus, overlays |
 | `keys.ts` | `vty` key event parsing | `vty` already handles Kitty protocol and extended keys |
-| `keybindings.ts` | `PiTui.Keybindings` | Configurable keybinding map checked in `handleEvent` |
-| `fuzzy.ts` | `PiTui.Fuzzy` | Pure fuzzy matching (used in selectors) |
-| `autocomplete.ts` | `PiTui.Autocomplete` | Completion overlay widget |
-| `components/*.ts` | `PiTui.Widget.*` | Each becomes a `Widget n` |
+| `keybindings.ts` | `HHTui.Keybindings` | Configurable keybinding map checked in `handleEvent` |
+| `fuzzy.ts` | `HHTui.Fuzzy` | Pure fuzzy matching (used in selectors) |
+| `autocomplete.ts` | `HHTui.Autocomplete` | Completion overlay widget |
+| `components/*.ts` | `HHTui.Widget.*` | Each becomes a `Widget n` |
 | `stdin-buffer.ts` | N/A | `brick` handles input buffering |
-| `editor-component.ts` | `PiTui.Widget.Editor` | Extend `Brick.Widgets.Edit.Editor` (multiline) |
-| `image.ts` | `PiTui.Image` | SIXEL/Kitty image protocol on top of `vty` raw output |
+| `editor-component.ts` | `HHTui.Widget.Editor` | Extend `Brick.Widgets.Edit.Editor` (multiline) |
+| `image.ts` | `HHTui.Image` | SIXEL/Kitty image protocol on top of `vty` raw output |
 
 ### 4.4 Component Mapping
 
-| pi-tui Component | Haskell Widget | brick Primitive |
+| TS pi-tui Component | Haskell Widget | brick Primitive |
 |---|---|---|
-| `Box` | `PiTui.Widget.Box` | `hBox` / `vBox` / `vLimit` / `hLimit` |
-| `Text` | `PiTui.Widget.Text` | `txt` / `txtWrap` |
-| `Input` | `PiTui.Widget.Input` | Custom `Editor` widget with single-line mode |
-| `Editor` | `PiTui.Widget.Editor` | Extend `Brick.Widgets.Edit.Editor` (multiline) |
-| `SelectList` | `PiTui.Widget.SelectList` | `Brick.Widgets.List` with custom rendering |
-| `Markdown` | `PiTui.Widget.Markdown` | Custom renderer (ANSI-colored, word-wrapped) |
-| `Spacer` | `PiTui.Widget.Spacer` | `fill` / `padLeftRight` |
-| `Loader` | `PiTui.Widget.Loader` | Spinner animation in `Widget` |
-| `Image` | `PiTui.Widget.Image` | Raw escape sequence output via `vty` |
-| `TruncatedText` | `PiTui.Widget.TruncatedText` | `visibleWidth` truncation on `txt` |
-| Overlays (Modal) | `PiTui.Overlay` | Render layer in `appDraw` (priority ordering) |
+| `Box` | `HHTui.Widget.Box` | `hBox` / `vBox` / `vLimit` / `hLimit` |
+| `Text` | `HHTui.Widget.Text` | `txt` / `txtWrap` |
+| `Input` | `HHTui.Widget.Input` | Custom `Editor` widget with single-line mode |
+| `Editor` | `HHTui.Widget.Editor` | Extend `Brick.Widgets.Edit.Editor` (multiline) |
+| `SelectList` | `HHTui.Widget.SelectList` | `Brick.Widgets.List` with custom rendering |
+| `Markdown` | `HHTui.Widget.Markdown` | Custom renderer (ANSI-colored, word-wrapped) |
+| `Spacer` | `HHTui.Widget.Spacer` | `fill` / `padLeftRight` |
+| `Loader` | `HHTui.Widget.Loader` | Spinner animation in `Widget` |
+| `Image` | `HHTui.Widget.Image` | Raw escape sequence output via `vty` |
+| `TruncatedText` | `HHTui.Widget.TruncatedText` | `visibleWidth` truncation on `txt` |
+| Overlays (Modal) | `HHTui.Overlay` | Render layer in `appDraw` (priority ordering) |
 
 ### 4.5 Image and Terminal Protocol Support
 
-pi-tui supports inline images (SIXEL, Kitty, iTerm2 protocols). This is the one area where `brick` has no built-in support. Implementation:
+The TypeScript pi-tui supports inline images (SIXEL, Kitty, iTerm2 protocols). This is the one area where `brick` has no built-in support. Implementation:
 
-1. Query terminal capabilities on startup (like pi-tui's `terminal-image.ts`)
+1. Query terminal capabilities on startup (like the TypeScript pi-tui's `terminal-image.ts`)
 2. Store cell dimensions for aspect-ratio-correct rendering
 3. Insert raw escape sequences into `vty` output using escape passthrough
 4. `brick`'s `Widget` rendering can include raw `vty` image bytes interleaved with text content
 
 ### 4.6 Keybinding Configuration
 
-pi-tui has a rich keybinding system (`keybindings.ts`) with per-action bindings, key conflicts, and user customization. Port this as `PiTui.Keybindings` integrating with `brick`'s event handling:
+The TypeScript pi-tui has a rich keybinding system (`keybindings.ts`) with per-action bindings, key conflicts, and user customization. Port this as `HHTui.Keybindings` integrating with `brick`'s event handling:
 
 ```haskell
 data KeybindingsConfig = KeybindingsConfig
@@ -414,16 +414,16 @@ matchesKey (Vty.EvKey k mods) kid = ...
 
 ---
 
-## 5. Package: `pi-coding-agent` — Coding Agent CLI & Extension System
+## 5. Package: `hharness-coding` — Coding Agent CLI & Extension System
 
 This is the largest package. It ties everything together.
 
 ### 5.1 Core Architecture
 
 ```
-pi-coding-agent/
+hharness-coding/
   src/
-    PiCoding/
+    HHCoding/
       Agent/
         Types.hs          -- Extension system types
         Session.hs        -- Session persistence (tree-structured)
@@ -515,10 +515,10 @@ Since Haskell doesn't have JS-style `require()`, we offer three approaches:
 
 **Strategy A: Compiled-in Extensions (Primary)**
 
-Extensions are Haskell modules compiled into the binary. The `pi-coding-agent` package lists extension modules explicitly:
+Extensions are Haskell modules compiled into the binary. The `hharness-coding` package lists extension modules explicitly:
 
 ```haskell
--- In pi-coding-agent, extensions are registered at startup
+-- In hharness-coding, built-in extensions are registered at startup
 loadExtensions :: [ExtensionFactory] -> [FilePath] -> IO LoadExtensionsResult
 loadExtensions builtIns paths = do
   -- builtIns are Haskell modules compiled into the binary
@@ -526,12 +526,12 @@ loadExtensions builtIns paths = do
   ...
 ```
 
-A user's `.pi/config.hs` or project's `.pi/extensions/` directory can specify extension modules:
+A user's `.hharness/config.hs` or project's `.hharness/extensions/` directory can specify extension modules:
 
 ```haskell
--- ~/.pi/extensions/my-extension.hs
+-- ~/.hharness/extensions/my-extension.hs
 module MyExtension where
-import PiCoding.Agent.Extensions.Types
+import HHCoding.Agent.Extensions.Types
 
 setup :: ExtensionFactory
 setup api = do
@@ -566,7 +566,7 @@ loadLuaExtension path api = runLua $ do
 Lua extensions look like:
 
 ```lua
--- .pi/extensions/hello.lua
+-- .hharness/extensions/hello.lua
 pi.on("tool_call", function(event, ctx)
   if event.toolName == "bash" then
     print("Bash command: " .. event.input.command)
@@ -711,26 +711,26 @@ emitResourcesDiscover :: ExtensionRunner -> FilePath -> Text -> IO ResourcesDisc
 Each tool becomes a Haskell module:
 
 ```haskell
--- PiCoding.Agent.Tools.Bash
+-- HHCoding.Agent.Tools.Bash
 createBashTool :: Maybe BashOperations -> FilePath -> AgentTool
 createBashTool operations root = AgentTool { ... }
 
--- PiCoding.Agent.Tools.Read
+-- HHCoding.Agent.Tools.Read
 createReadTool :: FilePath -> AgentTool
 
--- PiCoding.Agent.Tools.Edit
+-- HHCoding.Agent.Tools.Edit
 createEditTool :: FilePath -> AgentTool
 
--- PiCoding.Agent.Tools.Write
+-- HHCoding.Agent.Tools.Write
 createWriteTool :: FilePath -> AgentTool
 
--- PiCoding.Agent.Tools.Grep
+-- HHCoding.Agent.Tools.Grep
 createGrepTool :: FilePath -> AgentTool
 
--- PiCoding.Agent.Tools.Find
+-- HHCoding.Agent.Tools.Find
 createFindTool :: FilePath -> AgentTool
 
--- PiCoding.Agent.Tools.Ls
+-- HHCoding.Agent.Tools.Ls
 createLsTool :: FilePath -> AgentTool
 ```
 
@@ -781,7 +781,7 @@ data AgentSession = AgentSession
 
 Three modes like the TS implementation:
 
-1. **Interactive** — Full TUI (uses `pi-tui`)
+1. **Interactive** — Full TUI (uses `hharness-tui`)
 2. **Print** — Non-interactive, pipe input/output
 3. **RPC** — JSON-RPC over stdio (for IDE integration)
 
@@ -801,19 +801,19 @@ main = do
 ## 6. Dependency Map
 
 ```
-pi-ai
+hharness-ai
   ├── aeson, bytestring, text, containers, stm, async, time, vector
   ├── http-conduit, http-client-tls, http-types
   └── claude (MercuryTechnologies/claude), openai (MercuryTechnologies/openai)
 
-pi-agent-core
-  └── pi-ai, aeson, stm, async, containers, text, time
+hharness-agent
+  └── hharness-ai, aeson, stm, async, containers, text, time
 
-pi-tui
+hharness-tui
   └── brick, vty, text, containers, stm, unix, bytestring, vector, microlens
 
-pi-coding-agent
-  └── pi-agent-core, pi-ai, pi-tui, aeson, stm, async,
+hharness-coding
+  └── hharness-agent, hharness-ai, hharness-tui, aeson, stm, async,
        directory, filepath, process, optparse-applicative,
        hs-lua (for Lua extensions), cryptonite, memory
 ```
@@ -824,30 +824,30 @@ pi-coding-agent
 
 | Phase | Package | Milestone |
 |---|---|---|
-| **1** | `pi-ai` | Types, EventStream, Anthropic provider (port `PiAgent.Claude`), API registry, Faux provider |
-| **2** | `pi-ai` | OpenAI provider (both completions and responses APIs using MercuryTechnologies/openai) |
-| **3** | `pi-agent-core` | Evolve existing: upgrade AgentTool, add QueueMode, onPayload/onResponse hooks, CustomMessage support |
-| **4** | `pi-tui` | Brick app skeleton, key handling, basic widgets (Box, Text, Input, SelectList) |
-| **5** | `pi-coding-agent` | CLI skeleton, session manager, tools (bash, read, edit, write), system prompt builder |
-| **6** | `pi-coding-agent` | Extension system (Types, Runner, Loader for compiled-in extensions) |
-| **7** | `pi-coding-agent` | Lua extension backend, config loading, slash commands |
-| **8** | `pi-tui` | Advanced widgets (Markdown rendering, multiline Editor, autocomplete, overlays, images) |
-| **9** | `pi-coding-agent` | Interactive mode (full TUI), compaction, model cycling |
-| **10** | `pi-coding-agent` | RPC mode, print mode, authentication flows |
+| **1** | `hharness-ai` | Types, EventStream, Anthropic provider (port `HHAgent.Claude`), API registry, Faux provider |
+| **2** | `hharness-ai` | OpenAI provider (both completions and responses APIs using MercuryTechnologies/openai) |
+| **3** | `hharness-agent` | Evolve existing: upgrade AgentTool, add QueueMode, onPayload/onResponse hooks, CustomMessage support |
+| **4** | `hharness-tui` | Brick app skeleton, key handling, basic widgets (Box, Text, Input, SelectList) |
+| **5** | `hharness-coding` | CLI skeleton, session manager, tools (bash, read, edit, write), system prompt builder |
+| **6** | `hharness-coding` | Extension system (Types, Runner, Loader for compiled-in extensions) |
+| **7** | `hharness-coding` | Lua extension backend, config loading, slash commands |
+| **8** | `hharness-tui` | Advanced widgets (Markdown rendering, multiline Editor, autocomplete, overlays, images) |
+| **9** | `hharness-coding` | Interactive mode (full TUI), compaction, model cycling |
+| **10** | `hharness-coding` | RPC mode, print mode, authentication flows |
 
 ---
 
 ## 8. Testing Strategy
 
-- **pi-ai**: Unit tests for Anthropic and OpenAI provider request/response serialization. Integration tests against real APIs. The Faux provider is used for agent loop tests without API keys.
-- **pi-agent-core**: Property-based tests (QuickCheck) for the agent loop. Unit tests for state transitions.
-- **pi-tui**: Widget rendering and event handling tests using `brick`'s test infrastructure (`Brick.Test`) and `vty` image snapshots.
-- **pi-coding-agent**: End-to-end tests with the `faux` provider (the existing pi-ai faux provider pattern). Golden tests for session serialization.
+- **hharness-ai**: Unit tests for Anthropic and OpenAI provider request/response serialization. Integration tests against real APIs. The Faux provider is used for agent loop tests without API keys.
+- **hharness-agent**: Property-based tests (QuickCheck) for the agent loop. Unit tests for state transitions.
+- **hharness-tui**: Widget rendering and event handling tests using `brick`'s test infrastructure (`Brick.Test`) and `vty` image snapshots.
+- **hharness-coding**: End-to-end tests with the `faux` provider (the hharness-ai Faux provider). Golden tests for session serialization.
 
 ---
 
 ## 9. Deleted File
 
-`pi-agent-hs/app/AmpcodeFilesAgent.hs` has been deleted. The `pi-agent-hs.cabal` file has been updated to remove the `executable ampcode-files-agent` stanza. The `app/` directory has been removed.
+`hharness-agent/app/AmpcodeFilesAgent.hs (deleted)` has been deleted. The `hharness-agent.cabal` file has been updated to remove the `executable ampcode-files-agent` stanza. The `app/` directory has been removed.
 
-The library modules (`PiAgent.Types`, `PiAgent.Stream`, `PiAgent.AgentLoop`, `PiAgent.Agent`, `PiAgent.Claude`) remain intact and will serve as the starting point for the `pi-agent-core` package.
+The library modules (`HHAgent.Types`, `HHAgent.Stream`, `HHAgent.AgentLoop`, `HHAgent.Agent`, `HHAgent.Claude`) have been renamed from the original `PiAgent.*` prefix and serve as the starting point for the `hharness-agent` package.

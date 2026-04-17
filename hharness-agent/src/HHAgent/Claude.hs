@@ -1,6 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 
-{- | Bridge from @pi-agent-hs@ to Mercury\'s @claude@ package
+{- | Bridge from @hharness-agent@ to Mercury\'s @claude@ package
 (<https://github.com/MercuryTechnologies/claude>).
 
 Implements 'StreamFn' via the blocking Messages API (@\/v1\/messages@): one
@@ -10,7 +10,7 @@ Use 'claudeStreamFnCompat' when talking to proxies (e.g. Ollama) that omit the
 @signature@ field on @thinking@ blocks — the stock @claude@ JSON parser
 requires it, which would otherwise fail with @DecodeFailure@.
 -}
-module PiAgent.Claude (
+module HHAgent.Claude (
   claudeStreamFn,
   claudeStreamFnCompat,
   defaultClaudeModelId,
@@ -49,9 +49,9 @@ import Claude.V1.Tool qualified as Tool
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 
-import PiAgent.AgentLoop (StreamFn)
-import PiAgent.Stream (EventStream, endStream, newEventStream, pushEvent)
-import PiAgent.Types
+import HHAgent.AgentLoop (StreamFn)
+import HHAgent.Stream (EventStream, endStream, newEventStream, pushEvent)
+import HHAgent.Types
 
 -- | Model id aligned with the upstream @claude@ package examples.
 defaultClaudeModelId :: Text

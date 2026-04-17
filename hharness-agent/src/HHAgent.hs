@@ -1,9 +1,9 @@
-{- | pi-agent-hs: Haskell port of \@mariozechner\/pi-agent-core.
+{- | hharness-agent: Haskell agent loop library.
 
 Typical usage:
 
 @
-import PiAgent
+import HHAgent
 
 myStreamFn :: StreamFn
 myStreamFn = ...  -- plug in your LLM provider here
@@ -19,25 +19,25 @@ main = do
   waitForIdle agent
 @
 -}
-module PiAgent (
+module HHAgent (
   -- * Re-exports: types
-  module PiAgent.Types,
+  module HHAgent.Types,
 
   -- * Re-exports: streaming
-  module PiAgent.Stream,
+  module HHAgent.Stream,
 
   -- * Re-exports: low-level loop
-  module PiAgent.AgentLoop,
+  module HHAgent.AgentLoop,
 
   -- * Re-exports: high-level agent
-  module PiAgent.Agent,
+  module HHAgent.Agent,
 
   -- * Anthropic client bridge (Mercury @claude@ package)
-  module PiAgent.Claude,
+  module HHAgent.Claude,
 ) where
 
-import PiAgent.Agent
-import PiAgent.AgentLoop
-import PiAgent.Claude
-import PiAgent.Stream
-import PiAgent.Types
+import HHAgent.Agent
+import HHAgent.AgentLoop
+import HHAgent.Claude
+import HHAgent.Stream
+import HHAgent.Types

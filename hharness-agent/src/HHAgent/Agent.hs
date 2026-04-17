@@ -4,7 +4,7 @@ Haskell equivalent of @agent.ts@.
 All mutable fields live in a single 'TVar'; subscriber removal uses a
 monotonic integer key so functions don't need an 'Eq' instance.
 -}
-module PiAgent.Agent (
+module HHAgent.Agent (
   -- * Construction
   AgentOptions (..),
   defaultAgentOptions,
@@ -49,8 +49,8 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
-import PiAgent.AgentLoop (StreamFn, runAgentLoop, runAgentLoopContinue)
-import PiAgent.Types
+import HHAgent.AgentLoop (StreamFn, runAgentLoop, runAgentLoopContinue)
+import HHAgent.Types
 
 -- ─── Configuration ────────────────────────────────────────────────────────
 

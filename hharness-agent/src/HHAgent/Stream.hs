@@ -6,7 +6,7 @@ an async sequence of events that eventually settles with a final result.
 Thread-safe: multiple producers may call 'pushEvent' concurrently.
 Single-consumer: only one thread should call 'nextEvent'/'foldStream'.
 -}
-module PiAgent.Stream (
+module HHAgent.Stream (
   EventStream,
   newEventStream,
   pushEvent,

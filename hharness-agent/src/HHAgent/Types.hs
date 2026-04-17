@@ -1,9 +1,9 @@
-{- | Core data types for pi-agent-hs.
+{- | Core data types for hharness-agent.
 
 This module is the Haskell equivalent of the TypeScript @types.ts@.
 All types are pure (no IO), making them easy to test and serialise.
 -}
-module PiAgent.Types (
+module HHAgent.Types (
   -- * Enumerations
   ThinkingLevel (..),
   ToolExecutionMode (..),

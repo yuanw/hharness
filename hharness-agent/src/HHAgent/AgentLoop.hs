@@ -5,7 +5,7 @@ State is threaded via 'IORef' rather than mutated on a class; the two-level
 loop structure (outer: follow-ups, inner: tool calls + steering) is preserved
 exactly from the TypeScript original.
 -}
-module PiAgent.AgentLoop (
+module HHAgent.AgentLoop (
   -- * Stream function type
   StreamFn,
 
@@ -30,8 +30,8 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
-import PiAgent.Stream (EventStream, endStream, foldStream, newEventStream, pushEvent)
-import PiAgent.Types
+import HHAgent.Stream (EventStream, endStream, foldStream, newEventStream, pushEvent)
+import HHAgent.Types
 
 -- ─── Public type ──────────────────────────────────────────────────────────
 

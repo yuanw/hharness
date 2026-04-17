@@ -1,16 +1,16 @@
 cabal-version: 3.0
-name:          pi-agent-hs
+name:          hharness-agent
 version:       0.1.0.0
 synopsis:
-  Haskell port of @mariozechner/pi-agent-core (plus Claude bridge)
+  Haskell agent loop library with Anthropic and OpenAI bridges
 
 description:
   A library for building LLM-powered agentic applications.
-  Provides a two-level API: a pure agent loop (PiAgent.AgentLoop)
-  and a stateful Agent wrapper (PiAgent.Agent).
-  PiAgent.Claude connects the loop to Anthropic via Mercury's @claude@ package.
+  Provides a two-level API: a pure agent loop (HHAgent.AgentLoop)
+  and a stateful Agent wrapper (HHAgent.Agent).
+  HHAgent.Claude connects the loop to Anthropic via Mercury's @claude@ package.
   .
-  Port of the TypeScript \@mariozechner\/pi-agent-core package.
+  Evolved from the TypeScript \@mariozechner\/pi-agent-core package.
 
 license:       MIT
 build-type:    Simple
@@ -42,20 +42,20 @@ common shared
 library
   import:          shared
   exposed-modules:
-    PiAgent
-    PiAgent.Agent
-    PiAgent.AgentLoop
-    PiAgent.Claude
-    PiAgent.Stream
-    PiAgent.Types
+    HHAgent
+    HHAgent.Agent
+    HHAgent.AgentLoop
+    HHAgent.Claude
+    HHAgent.Stream
+    HHAgent.Types
 
   hs-source-dirs:  src
 
-test-suite pi-agent-hs-test
+test-suite hharness-agent-test
   import:         shared
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
   main-is:        Spec.hs
   build-depends:
-    , hspec        ^>=2.11
-    , pi-agent-hs
+    , hharness-agent
+    , hspec           ^>=2.11

@@ -8,7 +8,7 @@ import Data.Int (Int64)
 import Data.Text (Text)
 import Test.Hspec
 
-import PiAgent
+import HHAgent
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────
 
