@@ -1,16 +1,11 @@
 cabal-version: 3.0
-name:          hharness-agent
+name:          hharness-ai
 version:       0.1.0.0
-synopsis:
-  Haskell agent loop library with Anthropic and OpenAI bridges
-
+synopsis:      Unified multi-provider LLM streaming API
 description:
-  A library for building LLM-powered agentic applications.
-  Provides a two-level API: a pure agent loop (HHAgent.AgentLoop)
-  and a stateful Agent wrapper (HHAgent.Agent).
-  HHAgent.Claude connects the loop to Anthropic via Mercury's @claude@ package.
-  .
-  Evolved from the TypeScript \@mariozechner\/pi-agent-core package.
+  Haskell equivalent of @mariozechner/pi-ai@.
+  Provides core types, an STM-backed event stream, an API registry,
+  and provider implementations for Anthropic and OpenAI.
 
 license:       MIT
 build-type:    Simple
@@ -31,10 +26,10 @@ common shared
     , bytestring       ^>=0.11 || ^>=0.12
     , claude           ^>=1.4
     , containers       ^>=0.6  || ^>=0.7
-    , hharness-ai
     , http-client      ^>=0.7
     , http-client-tls  ^>=0.3
     , http-types       ^>=0.12
+    , scientific       ^>=0.3
     , stm              ^>=2.5
     , text             ^>=1.2  || ^>=2.0  || ^>=2.1
     , time             ^>=1.12
@@ -43,20 +38,13 @@ common shared
 library
   import:          shared
   exposed-modules:
-    HHAgent
-    HHAgent.Agent
-    HHAgent.AgentLoop
-    HHAgent.Claude
-    HHAgent.Stream
-    HHAgent.Types
+    HHAi
+    HHAi.Auth
+    HHAi.Models
+    HHAi.Provider.Anthropic
+    HHAi.Provider.Faux
+    HHAi.Registry
+    HHAi.Stream
+    HHAi.Types
 
   hs-source-dirs:  src
-
-test-suite hharness-agent-test
-  import:         shared
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        Spec.hs
-  build-depends:
-    , hharness-agent
-    , hspec           ^>=2.11

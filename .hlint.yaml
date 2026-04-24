@@ -1,0 +1,4 @@
+# HLint configuration
+# https://github.com/ndmitchell/hlint/blob/master/README.md
+
+- ignore: {name: "Use record patterns", within: HHAi.Types}
