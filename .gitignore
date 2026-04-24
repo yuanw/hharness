@@ -1,0 +1,23 @@
+# Nix
+result
+result-*
+repl-result-*
+
+# direnv (often used with Nix flakes)
+.direnv/
+.pre-commit-config.yaml
+# Haskell (Cabal, GHC, Stack)
+dist/
+dist-*
+dist-newstyle/
+cabal.project.local
+cabal.project.local~
+.ghc.environment.*
+*.hi
+*.o
+*.dyn_o
+*.prof
+*.hp
+*.aux
+*.eventlog
+.stack-work/

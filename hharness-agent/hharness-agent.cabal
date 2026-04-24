@@ -1,0 +1,61 @@
+cabal-version: 3.0
+name:          hharness-agent
+version:       0.1.0.0
+synopsis:
+  Haskell agent loop library with Anthropic and OpenAI bridges
+
+description:
+  A library for building LLM-powered agentic applications.
+  Provides a two-level API: a pure agent loop (HHAgent.AgentLoop)
+  and a stateful Agent wrapper (HHAgent.Agent).
+  HHAgent.Claude connects the loop to Anthropic via Mercury's @claude@ package.
+  .
+  Evolved from the TypeScript \@mariozechner\/pi-agent-core package.
+
+license:       MIT
+build-type:    Simple
+
+common shared
+  ghc-options:        -Wall
+  default-language:   GHC2021
+  default-extensions:
+    DeriveGeneric
+    LambdaCase
+    OverloadedStrings
+    RecordWildCards
+
+  build-depends:
+    , aeson            ^>=2.1  || ^>=2.2
+    , async            ^>=2.2
+    , base             ^>=4.17 || ^>=4.18 || ^>=4.19 || ^>=4.20
+    , bytestring       ^>=0.11 || ^>=0.12
+    , claude           ^>=1.4
+    , containers       ^>=0.6  || ^>=0.7
+    , http-client      ^>=0.7
+    , http-client-tls  ^>=0.3
+    , http-types       ^>=0.12
+    , stm              ^>=2.5
+    , text             ^>=1.2  || ^>=2.0  || ^>=2.1
+    , time             ^>=1.12
+    , vector           ^>=0.13 || ^>=0.14
+
+library
+  import:          shared
+  exposed-modules:
+    HHAgent
+    HHAgent.Agent
+    HHAgent.AgentLoop
+    HHAgent.Claude
+    HHAgent.Stream
+    HHAgent.Types
+
+  hs-source-dirs:  src
+
+test-suite hharness-agent-test
+  import:         shared
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        Spec.hs
+  build-depends:
+    , hharness-agent
+    , hspec           ^>=2.11
