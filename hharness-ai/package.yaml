@@ -26,6 +26,7 @@ library:
     - HHAi.Models
     - HHAi.Provider.Anthropic
     - HHAi.Provider.Faux
+    - HHAi.Provider.OpenAI
     - HHAi.Registry
     - HHAi.Stream
     - HHAi.Types

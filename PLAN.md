@@ -844,10 +844,119 @@ hharness-coding
 - **hharness-tui**: Widget rendering and event handling tests using `brick`'s test infrastructure (`Brick.Test`) and `vty` image snapshots.
 - **hharness-coding**: End-to-end tests with the `faux` provider (the hharness-ai Faux provider). Golden tests for session serialization.
 
+### 8.1 End-to-End Multi-Turn Agent Testing
+
+The agent loop is the most critical piece to test because it orchestrates streaming, tool execution, state mutation, and event emission across many turns. We test it without real API calls by building *scripted mock providers* — `StreamFn` implementations that inspect the accumulated context and return deterministic responses.
+
+#### 8.1.1 Scripted Mock Provider Pattern
+
+A scripted provider turns the `Context` (conversation history + tools) into a predetermined response sequence. This is more powerful than the single-response `fauxStreamFn` because it can simulate multi-turn tool-use conversations.
+
+```haskell
+-- | A scripted response: either plain text or a tool call request.
+data ScriptStep
+  = Say Text                           -- ^ assistant text response
+  | Call Text Text Value               -- ^ tool name, callId, arguments
+  | CallThenSay Text Text Value Text   -- ^ tool call + final text after result
+  | Err Text                           -- ^ provider error
+
+-- | Build a StreamFn from a list of steps.  Steps are consumed in order.
+scriptedStreamFn :: IORef [ScriptStep] -> StreamFn
+scriptedStreamFn stepsRef _model ctx _opts = do
+  es <- newEventStream
+  _ <- async $ do
+      ts <- nowMs
+      steps <- readIORef stepsRef
+      case steps of
+        [] -> pushDone es ts []
+        (step : rest) -> do
+          writeIORef stepsRef rest
+          case step of
+            Say txt -> streamText es ts txt
+            Call name callId args -> streamToolCall es ts name callId args
+            CallThenSay name callId args txt -> streamToolThenText es ts name callId args txt
+            Err msg -> streamError es ts msg
+  pure es
+```
+
+Key helper: `streamToolThenText` emits `EvToolCallStart` / `EvToolCallDelta` / `EvToolCallEnd` for the tool call, then immediately switches to text and finishes with `StopEndTurn`. This tests the real streaming path where a model can interleave reasoning, tool calls, and output text.
+
+#### 8.1.2 Test Scenarios
+
+| Scenario | Script | Assertions |
+|---|---|---|
+| **Single turn, no tools** | `[Say "hello"]` | Event sequence: `agent_start` → `turn_start` → `message_start` (user) → `message_end` (user) → `message_start` (assistant) → `message_update` … → `message_end` → `turn_end` → `agent_end`. Final messages: 2 (user + assistant). |
+| **Single turn, one tool call** | `[Call "bash" "tc1" (object ["command" .= "ls"])]` | Events include `tool_exec_start tc1 bash`, `tool_exec_end tc1 bash … False`. Final messages: 3 (user + assistant + toolResult). Tool is actually executed via `atExecute`. |
+| **Tool then final text** | `[CallThenSay "bash" "tc1" args "Done"]` | Assistant message has `StopToolUse`. After tool result is appended, a *second* assistant message is generated with `StopEndTurn` containing "Done". |
+| **Sequential vs Parallel** | `[Call "a" "1" args, Call "b" "2" args]` | With `Sequential`: `tool_exec_start 1` → `tool_exec_end 1` → `tool_exec_start 2` → `tool_exec_end 2`. With `Parallel`: both `tool_exec_start` fire before any `tool_exec_end`. |
+| **Steering injection** | `[Say "ack"]` + mid-run `steer agent (UserMessage …)` | `steer` enqueues a user message. Loop emits `turn_start` again, user message events, then a *new* assistant response. Verify `getState` shows 4 messages total. |
+| **Follow-up after stop** | `[Say "first"]` + `followUp agent (UserMessage …)` | After first `agent_end`, follow-up triggers a second run. Verify two full `agent_start` … `agent_end` sequences in event log. |
+| **Tool error → retry** | `[Call "crash" "tc1" args]` where tool throws | `tool_exec_end` carries `isError=True`. `afterToolCall` hook can mutate error to success or leave it. Verify `_errorMsg` in `AgentSnapshot`. |
+| **Cancel mid-stream** | `[Say "long"]` (slow provider) + `abort agent` | `cancel` check fires; verify `snapIsStreaming` becomes `False` and `_errorMsg` is set. |
+| **beforeToolCall blocking** | `[Call "bash" "tc1" args]` + hook returns `BlockCall` | Tool is never executed. A `ToolResultMessage` with `isError=True` and the block reason is appended instead. |
+| **Invalid tool args** | `[Call "bash" "tc1" (object ["bad" .= True])]` | `atValidateArgs` returns `Left`. Same error path as blocked call — tool result with `isError=True`. |
+| **Context transform** | `[Say "hello"]` with `alcTransformContext` that drops user messages | Verify `alcConvertToLlm` does *not* receive the dropped message, but the `Agent` still accumulates it in `_messages`. |
+| **Empty continue** | `[Say "hi"]` then `continue agent` | `runAgentLoopContinue` starts from existing context. Second assistant message is added. Verify 3 total messages. |
+
+#### 8.1.3 Event Invariants (Property-Based)
+
+Use `QuickCheck` to generate random agent scripts and assert invariants that must hold for *every* run:
+
+1. **Every `message_start` has a matching `message_end`.**
+2. **Every `tool_exec_start` has a matching `tool_exec_end`.**
+3. **`turn_end` can only follow a `message_end` (assistant).**
+4. **No `message_update` after `message_end` for the same message index.**
+5. **`agent_end` is always the last event.**
+6. **Tool count in a turn matches `length` of `EvTurnEnd` tool-result list.**
+7. **Parallel mode: all `tool_exec_start` timestamps ≤ all `tool_exec_end` timestamps for that turn.**
+
+Invariant-checking function: fold over `EventStream` or `[AgentEvent]` into a small state machine tracking open scopes (`message`, `tool`, `turn`).
+
+```haskell
+checkInvariants :: [AgentEvent] -> Either InvariantViolation ()
+-- ^ Left if any invariant is broken.
+```
+
+#### 8.1.4 Integration-Style Test with Real `Agent`
+
+Rather than calling `runAgentLoop` directly, exercise the public `Agent` API end-to-end:
+
+```haskell
+it "multi-turn tool conversation" $ do
+  let script =
+        [ Call "echo" "tc1" (object ["text" .= "ping"])
+        , CallThenSay "echo" "tc2" (object ["text" .= "pong"]) "All done"
+        ]
+  stepsRef <- newIORef script
+  let opts = (defaultAgentOptions testModel (scriptedStreamFn stepsRef))
+               { aoTools = [echoTool] }
+  agent <- newAgent opts
+
+  -- Turn 1: user asks something; assistant calls echo
+  promptText agent "Say ping"
+  waitForIdle agent
+  snap1 <- getState agent
+  length (snapMessages snap1) `shouldBe` 3  -- user + assistant + toolResult
+
+  -- Continue: assistant now calls echo again and says "All done"
+  continue agent
+  waitForIdle agent
+  snap2 <- getState agent
+  length (snapMessages snap2) `shouldBe` 6    -- + assistant + toolResult + assistant
+
+  -- Event log invariants
+  events <- readIORef eventsRef
+  checkInvariants events `shouldBe` Right ()
+```
+
+#### 8.1.5 Where These Tests Live
+
+| Package | Module | Focus |
+|---|---|---|
+| `hharness-agent` | `test/AgentLoopSpec.hs` | Low-level `runAgentLoop` / `runAgentLoopContinue` with scripted `StreamFn`. |
+| `hharness-agent` | `test/AgentSpec.hs` | High-level `Agent` API: `prompt`, `steer`, `followUp`, `abort`, `continue`, snapshots, subscribers. |
+| `hharness-agent` | `test/Invariants.hs` | Reusable event-log invariant checker, used by both suites. |
+| `hharness-ai` | `test/FauxProviderSpec.hs` | `fauxStreamFn` emits correct event shape and final `AssistantMessage`. |
+| `hharness-ai` | `test/AnthropicSpec.hs` | Request/response JSON round-trip tests; compat JSON patching. |
+
 ---
-
-## 9. Deleted File
-
-`hharness-agent/app/AmpcodeFilesAgent.hs (deleted)` has been deleted. The `hharness-agent.cabal` file has been updated to remove the `executable ampcode-files-agent` stanza. The `app/` directory has been removed.
-
-The library modules (`HHAgent.Types`, `HHAgent.Stream`, `HHAgent.AgentLoop`, `HHAgent.Agent`, `HHAgent.Claude`) have been renamed from the original `PiAgent.*` prefix and serve as the starting point for the `hharness-agent` package.
