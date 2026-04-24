@@ -1,0 +1,31 @@
+defaults:
+  local: ../package-common.yaml
+
+name: hharness-ai
+version: 0.1.0.0
+synopsis: Unified multi-provider LLM streaming API
+description: |
+  Haskell equivalent of @mariozechner/pi-ai@.
+  Provides core types, an STM-backed event stream, an API registry,
+  and provider implementations for Anthropic and OpenAI.
+license: MIT
+build-type: Simple
+
+dependencies:
+  - claude           ^>=1.4
+  - http-client      ^>=0.7
+  - http-client-tls  ^>=0.3
+  - http-types       ^>=0.12
+  - scientific       ^>=0.3
+
+library:
+  source-dirs: src
+  exposed-modules:
+    - HHAi
+    - HHAi.Auth
+    - HHAi.Models
+    - HHAi.Provider.Anthropic
+    - HHAi.Provider.Faux
+    - HHAi.Registry
+    - HHAi.Stream
+    - HHAi.Types

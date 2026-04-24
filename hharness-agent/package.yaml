@@ -1,0 +1,40 @@
+defaults:
+  local: ../package-common.yaml
+
+name: hharness-agent
+version: 0.1.0.0
+synopsis: Haskell agent loop library with Anthropic and OpenAI bridges
+description: |
+  A library for building LLM-powered agentic applications.
+  Provides a two-level API: a pure agent loop (HHAgent.AgentLoop)
+  and a stateful Agent wrapper (HHAgent.Agent).
+  HHAgent.Claude connects the loop to Anthropic via Mercury's @claude@ package.
+  .
+  Evolved from the TypeScript @mariozechner/pi-agent-core package.
+license: MIT
+build-type: Simple
+
+dependencies:
+  - claude           ^>=1.4
+  - hharness-ai
+  - http-client      ^>=0.7
+  - http-client-tls  ^>=0.3
+  - http-types       ^>=0.12
+
+library:
+  source-dirs: src
+  exposed-modules:
+    - HHAgent
+    - HHAgent.Agent
+    - HHAgent.AgentLoop
+    - HHAgent.Claude
+    - HHAgent.Stream
+    - HHAgent.Types
+
+tests:
+  hharness-agent-test:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - hharness-agent
+      - hspec ^>=2.11

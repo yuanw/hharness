@@ -18,6 +18,7 @@
           cabal-install
           ghc
           ghciwatch
+          hpack
           pkg-config
         ];
         # Needed so GHC/cabal can link transitive C deps (e.g. zlib via claude → tls).
