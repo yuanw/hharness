@@ -47,7 +47,7 @@ data CliOpts = CliOpts
   , cliLogFile :: Maybe String
   , cliSystem :: Maybe String
   , cliInteractive :: Bool
-  , cliTools :: Bool
+  , cliNoTools :: Bool
   }
 
 optsParser :: Parser CliOpts
@@ -255,12 +255,25 @@ runSingle model streamFn opts logPath useLog = do
 
 runInteractive :: Model -> (Model -> Context -> StreamOptions -> IO (EventStream AssistantMessageEvent AssistantMessage)) -> CliOpts -> String -> Bool -> IO ()
 runInteractive model streamFn opts logPath useLog = do
+  let tools = if cliNoTools opts then Nothing else fileTools
+      defaultSys = case tools of
+        Nothing -> Nothing
+        Just _ ->
+          Just $
+            Text.intercalate
+              "\n"
+              [ "You are a local coding assistant with direct file system access. You MUST use your tools."
+              , "Tools: read_file(path) → returns file contents.  write_file(path,content) → writes to disk."
+              , "RULE: If the user mentions any file path, reading, or writing → IMMEDIATELY CALL THE RIGHT TOOL."
+              , "NEVER say you cannot access files. NEVER suggest terminal commands. Use the tool directly."
+              ]
+      actualSys = sysPrompt opts <|> defaultSys
   ctxRef <-
     newIORef $
       Context
-        { cSystemPrompt = sysPrompt opts
+        { cSystemPrompt = actualSys
         , cMessages = []
-        , cTools = if cliTools opts then fileTools else Nothing
+        , cTools = tools
         }
 
   let sopts = defaultStreamOptions {soApiKey = Nothing, soMaxTokens = Just 2048}
