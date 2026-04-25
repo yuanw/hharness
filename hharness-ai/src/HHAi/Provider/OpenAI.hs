@@ -14,10 +14,11 @@ module HHAi.Provider.OpenAI (
   registerOpenAI,
 ) where
 
-import Control.Concurrent (async)
+import Control.Concurrent.Async (async)
 import Control.Exception (SomeException, try)
-import Control.Monad (unless, when)
-import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
+import Control.Monad (unless, void, when)
+import Data.Aeson (Value (..), eitherDecode, encode, object, toJSON, (.=))
+import Data.Aeson.Key qualified as AK
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBSC8
@@ -104,7 +105,7 @@ streamChatCompletion model ctx opts es = do
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
     Right (Just msg) -> endStream es msg
-    Right Nothing -> finalizeWithStop es ts model StopEndTurn
+    Right Nothing -> void $ finalizeWithStop es ts model StopEndTurn
 
 -- ═════════════════════════════════════════════════════════════════════════════
 --  Responses API
@@ -121,7 +122,7 @@ streamResponses model ctx opts es = do
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
     Right (Just msg) -> endStream es msg
-    Right Nothing -> finalizeWithStop es ts model StopEndTurn
+    Right Nothing -> void $ finalizeWithStop es ts model StopEndTurn
 
 -- ═════════════════════════════════════════════════════════════════════════════
 --  HTTP / SSE
@@ -153,14 +154,15 @@ sseStream reqHttp handler = do
     let code = statusCode (responseStatus resp)
     unless (code == 200) $ do
       body <- LBS.fromStrict <$> brRead (responseBody resp)
-      ioError $ userError $ "HTTP " ++ show code ++ " " ++ LBS.unpack body
+      ioError $ userError $ "HTTP " ++ show code ++ " " ++ LBSC8.unpack body
     processSse (responseBody resp) handler
 
 processSse :: BodyReader -> (Value -> IO (Maybe AssistantMessage)) -> IO (Maybe AssistantMessage)
 processSse br handler = go mempty Nothing
   where
     go buf mResult = do
-      chunk <- brRead br
+      chunkBS <- brRead br
+      let chunk = LBS.fromStrict chunkBS
       if LBS.null chunk
         then pure mResult
         else do
@@ -514,7 +516,7 @@ messageToChatMessage (MsgToolResult ToolResultMessage {trmToolCallId = tid, trmC
   object
     [ "role" .= String "tool"
     , "tool_call_id" .= String tid
-    , "content" .= textFromContent cs
+    , "content" .= textFromToolResultContent cs
     ]
 
 isImage :: UserContent -> Bool
@@ -569,10 +571,13 @@ messageToResponsesMessage (MsgToolResult ToolResultMessage {trmToolCallId = tid,
   object
     [ ("role", String "tool")
     , ("tool_call_id", String tid)
-    , ("content", textFromContent cs)
+    , ("content", textFromToolResultContent cs)
     ]
 
--- ─── Tool schema ───────────────────────────────────────────────────────────
+-- ─── Content helpers ───────────────────────────────────────────────────────
+
+textFromToolResultContent :: [ToolResultContent] -> Value
+textFromToolResultContent cs = String (Text.concat [t | TRCText (TextContent t _) <- cs])
 
 toolToOpenAI :: Tool -> Value
 toolToOpenAI t =
