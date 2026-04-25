@@ -960,3 +960,221 @@ it "multi-turn tool conversation" $ do
 | `hharness-ai` | `test/AnthropicSpec.hs` | Request/response JSON round-trip tests; compat JSON patching. |
 
 ---
+
+
+### 8.2 End-to-End Testing with Local Ollama Models
+
+Ollama exposes an OpenAI-compatible API at `POST /v1/chat/completions`. Some wrappers also provide an Anthropic-compatible facade. Rather than writing a dedicated Ollama provider, we **reuse the existing `openai-completions` or `anthropic-messages` provider** and override the `baseUrl` to `http://localhost:11434/v1` (or whatever the user has in `$HOME/.pi/agent/models.json`).
+
+#### 8.2.1 Model Registry from Disk (`HHAi.Models.Json`)
+
+The user\'s `$HOME/.pi/agent/models.json` specifies provider configuration and model metadata:
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "baseUrl": "http://localhost:11434/v1",
+      "models": [
+        { "id": "qwen2.5:14b", "contextWindow": 32768, "input": ["text"], "reasoning": false },
+        { "id": "llama3.1:8b", "contextWindow": 128000, "input": ["text", "image"], "reasoning": false }
+      ]
+    }
+  }
+}
+```
+
+A loader module parses this into `HHAi.Types.Model` records, inheriting `api`, `apiKey`, and `baseUrl` from the provider stanza:
+
+```haskell
+module HHAi.Models.Json (
+  loadModelsFromFile,
+  loadUserModels,
+) where
+
+data ProviderConfig = ProviderConfig
+  { pcApi    :: Text
+  , pcApiKey :: Text
+  , pcBaseUrl :: Text
+  , pcModels :: [ModelStub]
+  }
+
+data ModelStub = ModelStub
+  { msId            :: Text
+  , msContextWindow :: Int
+  , msInput         :: [Text]
+  , msReasoning     :: Bool
+  }
+
+providerModels :: Text -> ProviderConfig -> [Model]
+providerModels providerName pc =
+  [ Model
+      { mId = msId m
+      , mName = msId m
+      , mApi = pcApi pc
+      , mProvider = providerName
+      , mBaseUrl = pcBaseUrl pc
+      , mReasoning = msReasoning m
+      , mInput = msInput m
+      , mCost = Cost 0 0 0 0 0
+      , mContextWindow = msContextWindow m
+      , mMaxTokens = msContextWindow m `div` 2
+      , mHeaders = Nothing
+      , mCompat = Nothing
+      }
+  | m <- pcModels pc
+  ]
+```
+
+`loadUserModels` reads `$HOME/.pi/agent/models.json` and appends the loaded entries to the built-in model list. If the file is missing, fall back to `defaultAnthropicModels <> defaultOpenAIModels`.
+
+#### 8.2.2 Wrapping a Provider with Request/Response Logging
+
+For end-to-end debugging we need a **trace log** of every HTTP request sent to the local model and every SSE event received back. The log is append-only JSONL (`*.jsonl`) with one JSON object per line.
+
+```haskell
+module HHAi.Provider.Logging (
+  withRequestResponseLogging,
+) where
+
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
+
+data LogEntry
+  = LogRequest  { lTimestamp :: Int64, lModelId :: Text, lUrl :: Text, lBody :: Value }
+  | LogResponse { lTimestamp :: Int64, lModelId :: Text, lEventType :: Text, lPayload :: Value }
+  | LogError    { lTimestamp :: Int64, lModelId :: Text, lMessage :: Text }
+  deriving (Generic)
+```
+
+The wrapper intercepts at the `StreamFn` layer, *before* the request is serialised:
+
+```haskell
+withRequestResponseLogging :: FilePath -> StreamFn -> StreamFn
+withRequestResponseLogging logPath baseFn model ctx opts = do
+  t0 <- nowMs
+  ensureLogDir logPath
+  -- Log the outgoing request context
+  appendJsonl logPath $ LogRequest t0 (mId model) (mBaseUrl model) (contextToValue ctx)
+  -- Run the real provider
+  es <- baseFn model ctx opts
+  -- Fork a forwarding thread that copies every event into the log
+  es' <- newEventStream
+  _ <- async $ do
+    let loop = do
+          mev <- nextEvent es
+          case mev of
+            Nothing -> do
+              res <- getResult es
+              case res of
+                Right msg -> appendJsonl logPath $ LogResponse (amTimestamp msg) (mId model) "done" (toJSON msg)
+                Left e    -> appendJsonl logPath $ LogError (amTimestamp msg) (mId model) (Text.pack $ show e)
+              endStream es' res
+            Just ev -> do
+              appendJsonl logPath $ LogResponse t0 (mId model) (eventType ev) (toJSON ev)
+              pushEvent es' ev
+              loop
+    loop
+  pure es'
+```
+
+The JSONL log is human-readable and can be replayed into the test suite as a golden file or used for prompt engineering:
+
+```jsonl
+{"tag":"request","timestamp":1234567890000,"modelId":"qwen2.5:14b","url":"http://localhost:11434/v1/chat/completions","body":{"messages":[{"role":"user","content":"Say ping"}],"stream":true}}
+{"tag":"response","timestamp":1234567900000,"modelId":"qwen2.5:14b","eventType":"text_delta","payload":{"text":"pong"}}
+{"tag":"response","timestamp":1234567910000,"modelId":"qwen2.5:14b","eventType":"done","payload":{"stopReason":"end_turn"}}
+```
+
+#### 8.2.3 Multi-Turn Test Harness (`test/OllamaE2ESpec.hs`)
+
+A standalone hspec suite that exercises the full stack against a locally running Ollama instance. The test is **conditional**: if `localhost:11434` does not respond, the spec is skipped.
+
+```haskell
+module OllamaE2ESpec (spec) where
+
+import HHAi.Models.Json (loadUserModels)
+import HHAi.Provider.Logging (withRequestResponseLogging)
+import HHAi.Registry (newRegistry, getApiProvider, registerApiProvider)
+
+spec :: Spec
+spec = do
+  describe "Ollama multi-turn" $ do
+    it "loads models from ~/.pi/agent/models.json" $ do
+      models <- loadUserModels
+      any ((== "qwen2.5:14b") . mId) models `shouldBe` True
+
+    it "runs a two-turn conversation and logs to JSONL" $ do
+      -- 1. Discover local model
+      models <- loadUserModels
+      let model = fromJust $ find ((== "qwen2.5:14b") . mId) models
+
+      -- 2. Resolve provider by mApi (e.g. "openai-completions")
+      registry <- newRegistry
+      registerOpenAI registry   -- provides both completions & responses
+      provider <- fromJust <$> getApiProvider registry (mApi model)
+
+      -- 3. Wrap provider with request/response logging
+      logDir <- getTemporaryDirectory
+      let logFile = logDir </> "hharness-ollama-" <> show (amTimestamp model) <> ".jsonl"
+      let streamFn = withRequestResponseLogging logFile (apStream provider)
+
+      -- 4. Build agent with a simple tool
+      let opts = (defaultAgentOptions model streamFn)
+                   { aoTools = [echoTool, weatherTool]
+                   , aoToolExecution = Parallel
+                   }
+      agent <- newAgent opts
+
+      -- 5. Turn 1: ask the model to use a tool
+      promptText agent "What is the weather in Tokyo? Use the weather tool."
+      waitForIdle agent
+
+      -- 6. Verify tool was called
+      snap1 <- getState agent
+      length (filter isToolResult (snapMessages snap1)) `shouldBe` 1
+
+      -- 7. Turn 2: continue the conversation
+      promptText agent "Now what about Paris?"
+      waitForIdle agent
+
+      -- 8. Final assertions
+      snap2 <- getState agent
+      length (snapMessages snap2) `shouldSatisfy` (\>= 5)
+      snapIsStreaming snap2 `shouldBe` False
+
+      -- 9. Verify JSONL log exists and is valid
+      logExists <- doesFileExist logFile
+      logExists `shouldBe` True
+      logLines <- Text.lines <$> Text.readFile logFile
+      all isValidJson logLines `shouldBe` True
+      length logLines `shouldSatisfy` (\>= 4)  -- request + at least 3 response events
+```
+
+**What this tests end-to-end**:
+| Layer | Assertion |
+|---|---|
+| **Model loading** | `models.json` parses, `baseUrl` is local |
+| **Provider routing** | `getApiProvider registry (mApi model)` resolves to OpenAI provider |
+| **HTTP + SSE** | Real streaming response from `localhost:11434` |
+| **Tool calling** | Assistant generates a `ToolCall`; agent loop executes `weatherTool` |
+| **Multi-turn** | Second user prompt appends to existing context, model answers with history |
+| **Event invariants** | `checkInvariants` on the collected `AgentEvent` list still passes |
+| **Logging** | Every request and every streamed event appears in the JSONL file |
+
+#### 8.2.4 Alternative: Anthropic-Compatible Local Wrappers
+
+Some Ollama front-ends (e.g. `ollama` with a proxy layer) speak the Anthropic Messages API instead of OpenAI. In that case the user sets `"api": "anthropic-messages"` in `models.json` and the `anthropicStreamFn` / `anthropicStreamFnCompat` providers work unchanged -- only the `baseUrl` changes to `http://localhost:11434`.
+
+The test harness remains identical: it reads `mApi` from the model record and looks up the provider in the registry. No code changes are required to switch between OpenAI- and Anthropic-compatible local models.
+
+#### 8.2.5 Where the New Modules Live
+
+| Package | Module | Purpose |
+|---|---|---|
+| `hharness-ai` | `HHAi.Models.Json` | Parse `$HOME/.pi/agent/models.json` into `[Model]` |
+| `hharness-ai` | `HHAi.Provider.Logging` | `StreamFn` wrapper that writes request/response JSONL |
+| `hharness-agent` | `test/OllamaE2ESpec.hs` | Integration test against local Ollama (skipped when offline) |
+| `hharness-coding` | (future) CLI flag `--log-dir` | User-facing switch to enable request/response tracing |
