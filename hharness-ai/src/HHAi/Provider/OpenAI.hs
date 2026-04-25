@@ -101,7 +101,8 @@ streamChatCompletion model ctx opts es = do
   er <- try @SomeException $ do
     reqJson <- either (fail . Text.unpack) pure $ mkChatCompletionRequest model ctx opts
     reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) (resolvePath baseUrl "/v1/chat/completions") reqJson
-    sseStream reqHttp (chatCompletionDeltaHandler es ts model)
+    stateRef <- newIORef emptyPartialState
+    sseStream reqHttp (chatCompletionDeltaHandler es ts model stateRef)
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
     Right (Just msg) -> endStream es msg
@@ -118,7 +119,8 @@ streamResponses model ctx opts es = do
   er <- try @SomeException $ do
     reqJson <- either (fail . Text.unpack) pure $ mkResponsesRequest model ctx opts
     reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) (resolvePath baseUrl "/v1/responses") reqJson
-    sseStream reqHttp (responsesDeltaHandler es ts model)
+    stateRef <- newIORef emptyPartialState
+    sseStream reqHttp (responsesDeltaHandler es ts model stateRef)
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
     Right (Just msg) -> endStream es msg
@@ -222,9 +224,10 @@ chatCompletionDeltaHandler ::
   EventStream AssistantMessageEvent AssistantMessage ->
   Int64 ->
   Model ->
+  IORef PartialState ->
   Value ->
   IO (Maybe AssistantMessage)
-chatCompletionDeltaHandler es ts model val = do
+chatCompletionDeltaHandler es ts model stateRef val = do
   case val of
     Object obj
       | Just (Array choices) <- KM.lookup "choices" obj
@@ -234,7 +237,7 @@ chatCompletionDeltaHandler es ts model val = do
               case KM.lookup "delta" choiceObj of
                 Just (Object delta) ->
                   let finishReason = parseFinishReason (KM.lookup "finish_reason" choiceObj)
-                   in processCompletionDelta es ts model delta finishReason
+                   in processCompletionDelta es ts model stateRef delta finishReason
                 _ ->
                   pure Nothing
             _ ->
@@ -267,13 +270,12 @@ processCompletionDelta ::
   EventStream AssistantMessageEvent AssistantMessage ->
   Int64 ->
   Model ->
+  IORef PartialState ->
   KM.KeyMap Value ->
   Maybe StopReason ->
   IO (Maybe AssistantMessage)
-processCompletionDelta es ts model delta finishReason = do
-  stateRef <- newIORef emptyPartialState
-
-  -- 1. Emit start on first non-empty delta
+processCompletionDelta es ts model stateRef delta finishReason = do
+  -- 1. Emit start on first non-empty delta (only once)
   let content = case (KM.lookup "content" delta, KM.lookup "role" delta) of
         (Just (String c), _) | not (Text.null c) -> Just c
         (_, Just (String "assistant")) -> Just ""
@@ -285,7 +287,8 @@ processCompletionDelta es ts model delta finishReason = do
         Just (Array tds) -> Vector.toList tds
         _ -> []
 
-  when (isJust content || isJust thinking || not (null toolDeltas)) $ do
+  started <- psStarted <$> readIORef stateRef
+  when (not started && (isJust content || isJust thinking || not (null toolDeltas))) $ do
     let partial = emptyPartial ts
     pushEvent es (EvStart partial)
     modifyIORef' stateRef (\s -> s {psStarted = True})
@@ -415,9 +418,10 @@ responsesDeltaHandler ::
   EventStream AssistantMessageEvent AssistantMessage ->
   Int64 ->
   Model ->
+  IORef PartialState ->
   Value ->
   IO (Maybe AssistantMessage)
-responsesDeltaHandler es ts model val = do
+responsesDeltaHandler es ts model stateRef val = do
   case val of
     Object obj ->
       case (,) <$> KM.lookup "output" obj <*> KM.lookup "status" obj of
@@ -435,7 +439,7 @@ responsesDeltaHandler es ts model val = do
                   finishReason = Just StopEndTurn
                in case delta of
                     Just (Object dObj) ->
-                      processCompletionDelta es ts model dObj finishReason
+                      processCompletionDelta es ts model stateRef dObj finishReason
                     _ ->
                       finalizeWithStop es ts model StopEndTurn
             _ ->
@@ -454,7 +458,7 @@ responsesDeltaHandler es ts model val = do
                   finishReason = Nothing
                in case delta of
                     Just (Object dObj) ->
-                      processCompletionDelta es ts model dObj finishReason
+                      processCompletionDelta es ts model stateRef dObj finishReason
                     _ ->
                       pure Nothing
             _ ->
