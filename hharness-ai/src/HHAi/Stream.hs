@@ -18,6 +18,7 @@ module HHAi.Stream (
 
 import Control.Concurrent.STM
 import Control.Exception (SomeException, throwIO)
+import Control.Monad (void)
 
 {- | An asynchronous, single-consumer event stream.
 
@@ -39,12 +40,12 @@ pushEvent :: EventStream event result -> event -> IO ()
 pushEvent es ev = atomically $ writeTQueue (_esQueue es) (Just ev)
 
 {- | Signal end-of-stream and deliver the final result.
-Must be called exactly once, after all 'pushEvent' calls.
+Idempotent: safe to call more than once (subsequent calls are ignored).
 -}
 endStream :: EventStream event result -> result -> IO ()
 endStream es r = atomically $ do
   writeTQueue (_esQueue es) Nothing
-  putTMVar (_esResult es) (Right r)
+  void $ tryPutTMVar (_esResult es) (Right r)
 
 {- | Read the next event.  Blocks until one is available.
 Returns 'Nothing' once the stream has ended.

@@ -12,6 +12,8 @@ module HHAi (
 
 import HHAi.Auth
 import HHAi.Models
+import HHAi.Models.Json
+import HHAi.Provider.Logging
 import HHAi.Registry
 import HHAi.Stream
 import HHAi.Types

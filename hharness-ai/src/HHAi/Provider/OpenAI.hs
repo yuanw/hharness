@@ -100,7 +100,7 @@ streamChatCompletion model ctx opts es = do
   let baseUrl = if Text.null (mBaseUrl model) then "https://api.openai.com" else mBaseUrl model
   er <- try @SomeException $ do
     reqJson <- either (fail . Text.unpack) pure $ mkChatCompletionRequest model ctx opts
-    reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) "/v1/chat/completions" reqJson
+    reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) (resolvePath baseUrl "/v1/chat/completions") reqJson
     sseStream reqHttp (chatCompletionDeltaHandler es ts model)
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
@@ -117,7 +117,7 @@ streamResponses model ctx opts es = do
   let baseUrl = if Text.null (mBaseUrl model) then "https://api.openai.com" else mBaseUrl model
   er <- try @SomeException $ do
     reqJson <- either (fail . Text.unpack) pure $ mkResponsesRequest model ctx opts
-    reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) "/v1/responses" reqJson
+    reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) (resolvePath baseUrl "/v1/responses") reqJson
     sseStream reqHttp (responsesDeltaHandler es ts model)
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
@@ -141,6 +141,15 @@ mkPostRequest baseUrl apiKey path body = do
           ]
       , requestBody = RequestBodyLBS (encode body)
       }
+
+{- | If the base URL already ends with @/v1@, strip the leading @/v1@ from
+the path to avoid double @/v1@ segments (e.g. Ollama, LocalAI, OpenRouter).
+-}
+resolvePath :: Text -> Text -> Text
+resolvePath baseUrl path =
+  if Text.isSuffixOf "/v1" (stripTrailingSlash baseUrl) && Text.isPrefixOf "/v1" path
+    then Text.drop 3 path
+    else path
 
 {- | Open an HTTP response, verify 200, then read the SSE body line-by-line.
 The handler folds each @data: {…}@ JSON payload.  Once the stream ends it
@@ -617,6 +626,7 @@ finalizeWithStop es ts model sr = do
           , amTimestamp = ts
           }
   pushEvent es (EvDone sr finalMsg)
+  endStream es finalMsg
   pure (Just finalMsg)
 
 pushErr ::
