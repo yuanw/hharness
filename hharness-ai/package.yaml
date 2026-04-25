@@ -34,3 +34,11 @@ library:
     - HHAi.Registry
     - HHAi.Stream
     - HHAi.Types
+
+tests:
+  hharness-ai-test:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - hharness-ai
+      - hspec ^>=2.11

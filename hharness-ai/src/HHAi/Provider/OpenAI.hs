@@ -7,11 +7,20 @@ dependency set).  Both APIs stream via SSE over HTTPS.
 -   __openai-responses__:   @POST /v1/responses@        with @stream: true@
 -}
 module HHAi.Provider.OpenAI (
+  -- * Public API
   openaiCompletionsStreamFn,
   openaiResponsesStreamFn,
   openaiCompletionsApiProvider,
   openaiResponsesApiProvider,
   registerOpenAI,
+
+  -- * Internal (exported for testing)
+  toolCallToOpenAI,
+  PartialState (..),
+  emptyPartialState,
+  processCompletionDelta,
+  processSse,
+  mkChatCompletionRequest,
 ) where
 
 import Control.Concurrent.Async (async)
