@@ -20,7 +20,7 @@
         };
       };
 
-      packages.default = self'.packages.hharness-ai;
+      packages.default = self'.packages.hharness-agent;
 
       devShells.default = lib.mkForce (pkgs.mkShell {
         name = "hharness-dev-shell";
