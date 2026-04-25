@@ -30,7 +30,7 @@ import Data.Maybe (fromMaybe, isJust)
 import Data.Scientific (fromFloatDigits)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Vector qualified as Vector
 import Network.HTTP.Client (
@@ -102,11 +102,15 @@ streamChatCompletion model ctx opts es = do
     reqJson <- either (fail . Text.unpack) pure $ mkChatCompletionRequest model ctx opts
     reqHttp <- mkPostRequest baseUrl (fromMaybe "" (soApiKey opts)) (resolvePath baseUrl "/v1/chat/completions") reqJson
     stateRef <- newIORef emptyPartialState
-    sseStream reqHttp (chatCompletionDeltaHandler es ts model stateRef)
+    mmsg <- sseStream reqHttp (chatCompletionDeltaHandler es ts model stateRef)
+    case mmsg of
+      Just msg ->
+        endStream es msg
+      Nothing ->
+        void $ finalizeWithStop es ts model StopEndTurn
   case er of
     Left e -> pushErr es ts (Text.pack (show e))
-    Right (Just msg) -> endStream es msg
-    Right Nothing -> void $ finalizeWithStop es ts model StopEndTurn
+    Right () -> pure ()
 
 -- ═════════════════════════════════════════════════════════════════════════════
 --  Responses API
@@ -198,7 +202,7 @@ processSse br handler = go mempty Nothing
                 pure (m <|> mRes)
         else pure mRes
 
-    m <|> (Just _) = m
+    Just l <|> _ = Just l
     _ <|> r = r
 
 splitLines :: LBS.ByteString -> ([LBS.ByteString], LBS.ByteString)
@@ -227,23 +231,22 @@ chatCompletionDeltaHandler ::
   IORef PartialState ->
   Value ->
   IO (Maybe AssistantMessage)
-chatCompletionDeltaHandler es ts model stateRef val = do
-  case val of
-    Object obj
-      | Just (Array choices) <- KM.lookup "choices" obj
-      , not (Vector.null choices) ->
-          case Vector.head choices of
-            Object choiceObj ->
-              case KM.lookup "delta" choiceObj of
-                Just (Object delta) ->
-                  let finishReason = parseFinishReason (KM.lookup "finish_reason" choiceObj)
-                   in processCompletionDelta es ts model stateRef delta finishReason
-                _ ->
-                  pure Nothing
-            _ ->
-              pure Nothing
-    _ ->
-      pure Nothing
+chatCompletionDeltaHandler es ts model stateRef val = case val of
+  Object obj
+    | Just (Array choices) <- KM.lookup "choices" obj
+    , not (Vector.null choices) ->
+        case Vector.head choices of
+          Object choiceObj ->
+            case KM.lookup "delta" choiceObj of
+              Just (Object delta) ->
+                let finishReason = parseFinishReason (KM.lookup "finish_reason" choiceObj)
+                 in processCompletionDelta es ts model stateRef delta finishReason
+              _ ->
+                pure Nothing
+          _ ->
+            pure Nothing
+  _ ->
+    pure Nothing
 
 {- | Mutable accumulator for the text / tool_calls state of one streaming
 response.  OpenAI sends tool-call arguments as a series of tiny string
@@ -553,7 +556,7 @@ toolCallToOpenAI (ToolCall i n a _) =
   object
     [ ("id", String i)
     , ("type", String "function")
-    , ("function", object [("name", String n), ("arguments", a)])
+    , ("function", object [("name", String n), ("arguments", String (decodeUtf8 $ LBS.toStrict $ encode a))])
     ]
 
 -- ─── Responses API message format ──────────────────────────────────────────

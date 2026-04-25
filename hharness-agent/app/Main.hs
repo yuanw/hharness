@@ -28,7 +28,7 @@ import Options.Applicative
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory)
-import System.IO (hFlush, stderr, stdout)
+import System.IO (hFlush, stdout)
 
 import HHAi.Models.Json (loadModelById, loadUserModels)
 import HHAi.Provider.Logging (withRequestResponseLogging)
@@ -301,7 +301,6 @@ runInteractive model streamFn opts logPath useLog = do
         case amStopReason final of
           StopToolUse -> do
             let toolCalls = [tc | ACToolCall tc <- amContent final]
-            TIO.hPutStrLn stderr $ "DEBUG: stop=StopToolUse, contentCount=" <> Text.pack (show (length (amContent final))) <> ", toolCalls=" <> Text.pack (show (length toolCalls)) <> ", content=" <> Text.pack (show (amContent final))
             unless (null toolCalls) $ do
               TIO.putStrLn "[executing tools...]"
               forM_ toolCalls $ \tc -> do
